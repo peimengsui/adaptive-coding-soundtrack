@@ -1,0 +1,14 @@
+.git/**
+.gitignore
+.vscode/**
+.agents/**
+src/**
+scripts/**
+playground/**
+tsconfig.json
+PLAN.md
+*.vsix
+node_modules/**
+!node_modules/.package-lock.json
+dist/test/**
+dist/**/*.map

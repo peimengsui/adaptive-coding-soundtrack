@@ -1,0 +1,65 @@
+{
+  "name": "adaptive-coding-soundtrack",
+  "displayName": "Adaptive Coding Soundtrack",
+  "description": "Local-first music that adapts to your coding flow.",
+  "version": "0.1.0",
+  "publisher": "adaptive-soundtrack",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "keywords": ["music", "focus", "productivity", "cursor"],
+  "activationEvents": [
+    "onCommand:adaptiveMusic.start",
+    "onCommand:adaptiveMusic.stop",
+    "onCommand:adaptiveMusic.togglePause",
+    "onCommand:adaptiveMusic.chooseStyle",
+    "onCommand:adaptiveMusic.setVolume",
+    "onCommand:adaptiveMusic.showCurrentState",
+    "onCommand:adaptiveMusic.showPlayer"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "adaptiveMusic.start", "title": "Start Session", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.stop", "title": "Stop Session", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.togglePause", "title": "Pause/Resume", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.chooseStyle", "title": "Choose Style", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.setVolume", "title": "Set Volume", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.showCurrentState", "title": "Show Current State", "category": "Adaptive Music" },
+      { "command": "adaptiveMusic.showPlayer", "title": "Show Player", "category": "Adaptive Music" }
+    ],
+    "configuration": {
+      "title": "Adaptive Coding Soundtrack",
+      "properties": {
+        "adaptiveMusic.defaultStyle": {
+          "type": "string",
+          "enum": ["ambient", "jazz", "lofi"],
+          "enumDescriptions": ["Spacious pads and slow movement", "Warm chords with a light walking pulse", "Soft beats and mellow harmony"],
+          "default": "ambient",
+          "description": "Music style selected when a session starts."
+        },
+        "adaptiveMusic.volume": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.45, "description": "Playback volume from 0 to 1." },
+        "adaptiveMusic.adaptiveSwitching": { "type": "boolean", "default": true, "description": "Automatically change musical intent with coding state." },
+        "adaptiveMusic.idleTimeoutSeconds": { "type": "number", "minimum": 10, "maximum": 3600, "default": 120, "description": "Seconds without activity before Idle." },
+        "adaptiveMusic.waitingDetectionSeconds": { "type": "number", "minimum": 2, "maximum": 300, "default": 8, "description": "Editing pause during a running task before Waiting." },
+        "adaptiveMusic.deepFocusSeconds": { "type": "number", "minimum": 15, "maximum": 1800, "default": 90, "description": "Sustained editing before Deep Focus." },
+        "adaptiveMusic.completedCueSeconds": { "type": "number", "minimum": 2, "maximum": 30, "default": 8, "description": "Duration of Completed." },
+        "adaptiveMusic.fadeDurationMs": { "type": "number", "minimum": 0, "maximum": 10000, "default": 1400, "description": "Crossfade duration." }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run compile && node --test dist/test/*.test.js",
+    "package": "vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.9.0"
+  }
+}
