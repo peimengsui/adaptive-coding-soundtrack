@@ -1,6 +1,8 @@
 {
   "version": "2.0.0",
   "tasks": [
-    { "type": "npm", "script": "compile", "problemMatcher": "$tsc", "group": "build", "label": "npm: compile" }
+    { "type": "npm", "script": "compile", "problemMatcher": "$tsc", "group": "build", "label": "npm: compile" },
+    { "type": "npm", "script": "verify", "problemMatcher": "$tsc", "group": "test", "label": "npm: verify" },
+    { "type": "npm", "script": "test:integration", "problemMatcher": [], "group": "test", "label": "npm: test:integration" }
   ]
 }

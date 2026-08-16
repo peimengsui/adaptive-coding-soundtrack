@@ -1,27 +1,30 @@
-# Adaptive Coding Soundtrack MVP Plan
+# Adaptive Coding Soundtrack 0.2 Release Plan
 
-## Goal
+## Objective
 
-Deliver a local-first VS Code extension, compatible with Cursor, that infers coding states from standard editor events and adapts an original procedural soundtrack.
+Turn the working MVP into a hardened local-first beta without adding telemetry, proprietary Cursor dependencies, external music services, or a user pilot.
 
-## Architecture
+## Completed scope
 
-1. `ActivityCollector` translates VS Code events into content-free signals.
-2. `ContextEngine` maps signals and configured timings to `CodingContext`.
-3. `MusicDirector` maps context and style to `MusicRequest`.
-4. `MusicProvider` resolves the request to a `Track`.
-5. `WebviewAudioPlayer` renders original audio with Web Audio.
-6. `MusicSessionController` coordinates commands and the status bar.
+- **Release hardening:** expanded unit coverage, real Extension Host tests, package-content validation, zero production vulnerability audit, CI, release automation, Dependabot, support/security/privacy documents, icon, and clean VSIX contents.
+- **Context accuracy:** task outcomes, terminal shell execution, debug lifecycle, focus, active-file diagnostic counts, failure-aware completion, explainable reasons, transition hysteresis, confidence gating, and three local sensitivity profiles.
+- **Audio quality:** external maintainable player assets, deterministic variation, schedule-ahead timing, beat-aligned transitions, stereo placement, filtering, compression, convolution reverb, persisted Webview preferences, and lifecycle diagnostics.
+- **Distribution:** versioned `0.2.0` manifest, UI extension placement, untrusted-workspace declaration, gallery artwork, CI artifact, tag-driven GitHub releases, issue template, and release documentation.
 
 ## Acceptance criteria
 
-- Compiles and launches in VS Code and Cursor.
-- Start/stop, three styles, pause/resume, and volume work.
-- Status bar shows style and state.
-- Six configured deterministic states are detected.
-- Task waiting and completion are recognized.
-- Music reacts with faded transitions.
-- All processing remains local.
-- Core behavior is unit-tested.
-- Build, tests, type-checking, and VSIX packaging pass.
-- README documents the complete workflow and extension points.
+- Strict compilation and player syntax validation pass.
+- All deterministic core tests pass.
+- Extension activation, command registration, configuration defaults, and player lifecycle pass in real Extension Hosts.
+- Compatibility tests pass on VS Code 1.95.3 and current stable.
+- Production dependency audit reports no vulnerabilities.
+- VSIX contains only required runtime, media, license, and documentation files and remains below 2 MB.
+- Cursor and VS Code retain working start/style/audio/control behavior.
+- No source, paths, terminal contents, diagnostic messages, or prompts are stored or transmitted.
+
+## Deferred
+
+- Small user pilot and telemetry/feedback design
+- Marketplace publication credentials and final publisher/repository metadata
+- External or AI music providers
+- Cursor-specific context until a supported API exists

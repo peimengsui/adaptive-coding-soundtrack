@@ -6,6 +6,7 @@ const TEST_CONFIG: ContextEngineConfig = {
   idleTimeoutMs: 5_000, waitingTimeoutMs: 1_000, deepFocusDurationMs: 2_500,
   completionHoldMs: 800, editWindowMs: 1_200, activeEditCount: 3,
   editContinuityGapMs: 1_500, navigationWindowMs: 1_000, reviewingAfterEditMs: 300,
+  transitionDebounceMs: 0, unfocusedIdleTimeoutMs: 1_000,
 };
 
 test("repeated typing becomes active coding", () => {
@@ -55,4 +56,62 @@ test("prolonged inactivity becomes idle", () => {
   engine.record({ kind: "navigation", at: 100 });
   assert.equal(engine.getContext(5_099).state, "reviewing");
   assert.equal(engine.getContext(5_100).state, "idle");
+});
+
+test("terminal shell execution contributes waiting and completion signals", () => {
+  const engine = new ContextEngine(TEST_CONFIG);
+  engine.record({ kind: "terminal_command_started", at: 100 });
+  engine.record({ kind: "edit", at: 200 });
+  const waiting = engine.getContext(1_200);
+  assert.equal(waiting.state, "waiting");
+  assert.equal(waiting.activeTask, false);
+  assert.equal(waiting.activeExecution, true);
+
+  const completed = engine.record({ kind: "terminal_command_completed", at: 1_300, outcome: "success" });
+  assert.equal(completed.state, "completed");
+  assert.match(completed.reason, /Terminal command completed/);
+});
+
+test("failed execution does not play the completion state", () => {
+  const engine = new ContextEngine(TEST_CONFIG);
+  engine.record({ kind: "task_started", at: 100 });
+  const context = engine.record({ kind: "task_completed", at: 250, outcome: "failure" });
+  assert.equal(context.state, "reviewing");
+  assert.match(context.reason, /ended with errors/);
+});
+
+test("completion cue expires without an extra debounce delay", () => {
+  const engine = new ContextEngine({ ...TEST_CONFIG, transitionDebounceMs: 500 });
+  engine.record({ kind: "task_started", at: 100 });
+  assert.equal(engine.record({ kind: "task_completed", at: 250, outcome: "success" }).state, "completed");
+  assert.equal(engine.getContext(1_049).state, "completed");
+  assert.equal(engine.getContext(1_050).state, "reviewing");
+});
+
+test("diagnostic updates do not postpone idle", () => {
+  const engine = new ContextEngine(TEST_CONFIG);
+  engine.record({ kind: "navigation", at: 100 });
+  engine.record({ kind: "diagnostics_changed", at: 4_900, diagnosticErrors: 2 });
+  const context = engine.getContext(5_100);
+  assert.equal(context.state, "idle");
+  assert.equal(context.diagnosticErrors, 2);
+  assert.equal(context.lastActivityAt, 100);
+});
+
+test("an unfocused editor uses the shorter idle timeout", () => {
+  const engine = new ContextEngine(TEST_CONFIG);
+  engine.record({ kind: "navigation", at: 100 });
+  engine.record({ kind: "window_blurred", at: 200 });
+  assert.equal(engine.getContext(1_199).state, "reviewing");
+  assert.equal(engine.getContext(1_200).state, "idle");
+});
+
+test("non-critical transitions are debounced", () => {
+  const engine = new ContextEngine({ ...TEST_CONFIG, transitionDebounceMs: 500 });
+  engine.record({ kind: "edit", at: 100 });
+  engine.record({ kind: "edit", at: 200 });
+  engine.record({ kind: "edit", at: 300 });
+  assert.equal(engine.record({ kind: "navigation", at: 1_600 }).state, "active_coding");
+  assert.equal(engine.getContext(2_099).state, "active_coding");
+  assert.equal(engine.getContext(2_100).state, "reviewing");
 });

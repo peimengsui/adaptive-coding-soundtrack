@@ -5,7 +5,17 @@ import { MusicDirector } from "../core/musicDirector";
 import { CodingContext, CodingState, MusicStyle } from "../core/types";
 
 function context(state: CodingState, intensity: number): CodingContext {
-  return { state, intensity, confidence: 0.9, activeTask: state === "waiting", lastActivityAt: 1_000 };
+  return {
+    state,
+    intensity,
+    confidence: 0.9,
+    activeTask: state === "waiting",
+    activeExecution: state === "waiting",
+    diagnosticErrors: 0,
+    diagnosticWarnings: 0,
+    reason: "test context",
+    lastActivityAt: 1_000,
+  };
 }
 
 test("director deterministically maps each state to musical intent", () => {
@@ -39,4 +49,6 @@ test("provider resolves a deterministic original procedural track", async () => 
   assert.match(first.id, /^lofi-focus-/);
   assert.equal(first.synthesis.tempoBpm, request.tempoBpm);
   assert.ok(first.synthesis.chordProgression.length >= 4);
+  assert.ok(first.synthesis.variationSeed > 0);
+  assert.ok(first.synthesis.lowpassHz > 0);
 });

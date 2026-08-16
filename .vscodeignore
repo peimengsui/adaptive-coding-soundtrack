@@ -1,14 +1,17 @@
 .git/**
 .gitignore
 .vscode/**
+.github/**
 .agents/**
 src/**
 scripts/**
 playground/**
+test-fixture/**
 tsconfig.json
 PLAN.md
 *.vsix
 node_modules/**
 !node_modules/.package-lock.json
 dist/test/**
+dist/integration/**
 dist/**/*.map

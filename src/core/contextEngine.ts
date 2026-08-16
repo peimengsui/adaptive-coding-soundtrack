@@ -1,4 +1,13 @@
-import { ActivityEvent, CodingContext, CodingState, clamp, roundToHundredth } from "./types";
+import {
+  ActivityEvent,
+  ActivityKind,
+  CodingContext,
+  CodingState,
+  ExecutionOutcome,
+  ExecutionSource,
+  clamp,
+  roundToHundredth,
+} from "./types";
 
 export interface ContextEngineConfig {
   idleTimeoutMs: number;
@@ -10,6 +19,8 @@ export interface ContextEngineConfig {
   editContinuityGapMs: number;
   navigationWindowMs: number;
   reviewingAfterEditMs: number;
+  transitionDebounceMs: number;
+  unfocusedIdleTimeoutMs: number;
 }
 
 export const DEFAULT_CONTEXT_ENGINE_CONFIG: Readonly<ContextEngineConfig> = {
@@ -22,7 +33,18 @@ export const DEFAULT_CONTEXT_ENGINE_CONFIG: Readonly<ContextEngineConfig> = {
   editContinuityGapMs: 20_000,
   navigationWindowMs: 15_000,
   reviewingAfterEditMs: 4_000,
+  transitionDebounceMs: 1_500,
+  unfocusedIdleTimeoutMs: 30_000,
 };
+
+interface ExecutionState {
+  tasks: number;
+  terminalCommands: number;
+  debugSessions: number;
+}
+
+const NON_USER_ACTIVITY = new Set<ActivityKind>(["diagnostics_changed"]);
+const IMMEDIATE_STATES = new Set<CodingState>(["idle", "waiting", "completed"]);
 
 /** Pure state inference that never sees document contents or file paths. */
 export class ContextEngine {
@@ -31,12 +53,20 @@ export class ContextEngine {
   private navigationTimes: number[] = [];
   private lastEditAt?: number;
   private codingStreakStartedAt?: number;
-  private taskStartedAt?: number;
-  private taskCompletedAt?: number;
-  private activeTaskCount = 0;
+  private executionStartedAt?: number;
+  private executionCompletedAt?: number;
+  private executionSource?: ExecutionSource;
+  private executionOutcome?: ExecutionOutcome;
+  private readonly executions: ExecutionState = { tasks: 0, terminalCommands: 0, debugSessions: 0 };
+  private diagnosticErrors = 0;
+  private diagnosticWarnings = 0;
+  private windowFocused = true;
   private activeLanguage?: string;
   private lastActivityAt = 0;
   private hasActivity = false;
+  private stableState: CodingState = "idle";
+  private pendingState?: CodingState;
+  private pendingStateSince?: number;
 
   public constructor(config: ContextEngineConfig = { ...DEFAULT_CONTEXT_ENGINE_CONFIG }) {
     this.config = { ...config };
@@ -46,7 +76,9 @@ export class ContextEngine {
 
   public record(event: ActivityEvent): CodingContext {
     this.hasActivity = true;
-    this.lastActivityAt = Math.max(this.lastActivityAt, event.at);
+    if (!NON_USER_ACTIVITY.has(event.kind)) {
+      this.lastActivityAt = Math.max(this.lastActivityAt, event.at);
+    }
     if (event.language) this.activeLanguage = event.language;
 
     switch (event.kind) {
@@ -56,22 +88,40 @@ export class ContextEngine {
         }
         this.lastEditAt = event.at;
         this.editTimes.push(event.at);
-        this.taskCompletedAt = undefined;
+        this.executionCompletedAt = undefined;
+        this.executionOutcome = undefined;
+        this.executionSource = undefined;
         break;
       case "navigation":
         this.navigationTimes.push(event.at);
         break;
       case "task_started":
-        this.activeTaskCount += 1;
-        if (this.activeTaskCount === 1) this.taskStartedAt = event.at;
-        this.taskCompletedAt = undefined;
+        this.startExecution("task", event.at);
         break;
       case "task_completed":
-        this.activeTaskCount = Math.max(0, this.activeTaskCount - 1);
-        if (this.activeTaskCount === 0) {
-          this.taskStartedAt = undefined;
-          this.taskCompletedAt = event.at;
-        }
+        this.finishExecution("task", event.at, event.outcome);
+        break;
+      case "terminal_command_started":
+        this.startExecution("terminal", event.at);
+        break;
+      case "terminal_command_completed":
+        this.finishExecution("terminal", event.at, event.outcome);
+        break;
+      case "debug_started":
+        this.startExecution("debug", event.at);
+        break;
+      case "debug_completed":
+        this.finishExecution("debug", event.at, event.outcome);
+        break;
+      case "diagnostics_changed":
+        this.diagnosticErrors = Math.max(0, event.diagnosticErrors ?? this.diagnosticErrors);
+        this.diagnosticWarnings = Math.max(0, event.diagnosticWarnings ?? this.diagnosticWarnings);
+        break;
+      case "window_focused":
+        this.windowFocused = true;
+        break;
+      case "window_blurred":
+        this.windowFocused = false;
         break;
       case "save":
       case "terminal_opened":
@@ -83,7 +133,8 @@ export class ContextEngine {
 
   public getContext(now: number = Date.now()): CodingContext {
     this.pruneHistory(now);
-    const state = this.inferState(now);
+    const candidate = this.inferCandidateState(now);
+    const state = this.stabilizeState(candidate, now);
     const recentEdits = this.editTimes.length;
     const editSignal = clamp(recentEdits / Math.max(this.config.activeEditCount * 2, 1));
     let intensity = 0;
@@ -109,20 +160,29 @@ export class ContextEngine {
       intensity: roundToHundredth(clamp(intensity)),
       confidence: roundToHundredth(clamp(confidence)),
       activeLanguage: this.activeLanguage,
-      activeTask: this.activeTaskCount > 0,
+      activeTask: this.executions.tasks > 0,
+      activeExecution: this.activeExecutionCount() > 0,
+      diagnosticErrors: this.diagnosticErrors,
+      diagnosticWarnings: this.diagnosticWarnings,
+      reason: this.explainState(state, now),
       lastActivityAt: this.lastActivityAt,
     };
   }
 
-  private inferState(now: number): CodingState {
-    if (this.taskCompletedAt !== undefined && now - this.taskCompletedAt < this.config.completionHoldMs) return "completed";
+  private inferCandidateState(now: number): CodingState {
+    if (
+      this.executionCompletedAt !== undefined &&
+      this.executionOutcome !== "failure" &&
+      now - this.executionCompletedAt < this.config.completionHoldMs
+    ) return "completed";
 
-    if (this.activeTaskCount > 0 && this.taskStartedAt !== undefined) {
-      const relevantEditAt = this.lastEditAt !== undefined && this.lastEditAt >= this.taskStartedAt ? this.lastEditAt : this.taskStartedAt;
+    if (this.activeExecutionCount() > 0 && this.executionStartedAt !== undefined) {
+      const relevantEditAt = this.lastEditAt !== undefined && this.lastEditAt >= this.executionStartedAt ? this.lastEditAt : this.executionStartedAt;
       if (now - relevantEditAt >= this.config.waitingTimeoutMs) return "waiting";
     }
 
-    if (!this.hasActivity || now - this.lastActivityAt >= this.config.idleTimeoutMs) return "idle";
+    const idleTimeout = this.windowFocused ? this.config.idleTimeoutMs : Math.min(this.config.idleTimeoutMs, this.config.unfocusedIdleTimeoutMs);
+    if (!this.hasActivity || now - this.lastActivityAt >= idleTimeout) return "idle";
 
     const hasRecentEdit = this.lastEditAt !== undefined && now - this.lastEditAt <= this.config.editWindowMs;
     const hasSustainedEditing = hasRecentEdit && this.codingStreakStartedAt !== undefined && now - this.codingStreakStartedAt >= this.config.deepFocusDurationMs && this.editTimes.length >= this.config.activeEditCount;
@@ -135,6 +195,96 @@ export class ContextEngine {
     if (isNavigating && editingHasSettled) return "reviewing";
     if (hasRecentEdit) return "active_coding";
     return "reviewing";
+  }
+
+  private stabilizeState(candidate: CodingState, now: number): CodingState {
+    if (candidate === this.stableState) {
+      this.pendingState = undefined;
+      this.pendingStateSince = undefined;
+      return this.stableState;
+    }
+
+    const immediate =
+      this.config.transitionDebounceMs <= 0 ||
+      IMMEDIATE_STATES.has(candidate) ||
+      this.executionCompletedAt === now ||
+      this.stableState === "completed" ||
+      (this.stableState === "idle" && candidate !== "idle") ||
+      (candidate === "active_coding" && this.lastEditAt === now);
+    if (immediate) return this.commitState(candidate);
+
+    if (this.pendingState !== candidate) {
+      this.pendingState = candidate;
+      this.pendingStateSince = now;
+      return this.stableState;
+    }
+    if (this.pendingStateSince !== undefined && now - this.pendingStateSince >= this.config.transitionDebounceMs) {
+      return this.commitState(candidate);
+    }
+    return this.stableState;
+  }
+
+  private commitState(state: CodingState): CodingState {
+    this.stableState = state;
+    this.pendingState = undefined;
+    this.pendingStateSince = undefined;
+    return state;
+  }
+
+  private startExecution(source: ExecutionSource, at: number): void {
+    const wasIdle = this.activeExecutionCount() === 0;
+    if (source === "task") this.executions.tasks += 1;
+    else if (source === "terminal") this.executions.terminalCommands += 1;
+    else this.executions.debugSessions += 1;
+    if (wasIdle) this.executionStartedAt = at;
+    this.executionCompletedAt = undefined;
+    this.executionOutcome = undefined;
+  }
+
+  private finishExecution(source: ExecutionSource, at: number, outcome: ExecutionOutcome = "unknown"): void {
+    if (source === "task") this.executions.tasks = Math.max(0, this.executions.tasks - 1);
+    else if (source === "terminal") this.executions.terminalCommands = Math.max(0, this.executions.terminalCommands - 1);
+    else this.executions.debugSessions = Math.max(0, this.executions.debugSessions - 1);
+
+    if (this.activeExecutionCount() === 0) {
+      this.executionStartedAt = undefined;
+      this.executionCompletedAt = at;
+      this.executionSource = source;
+      this.executionOutcome = outcome;
+    }
+  }
+
+  private activeExecutionCount(): number {
+    return this.executions.tasks + this.executions.terminalCommands + this.executions.debugSessions;
+  }
+
+  private explainState(state: CodingState, now: number): string {
+    switch (state) {
+      case "idle": return this.windowFocused ? "No recent editor activity" : "Editor window is unfocused";
+      case "active_coding": return `${this.editTimes.length} recent edit${this.editTimes.length === 1 ? "" : "s"}`;
+      case "deep_focus": return "Sustained editing with a recent change";
+      case "waiting": return `${this.executionLabel()} running while editing is paused`;
+      case "completed": return `${this.executionLabel(this.executionSource)} completed`;
+      case "reviewing":
+        if (this.executionOutcome === "failure" && this.executionCompletedAt !== undefined && now - this.executionCompletedAt < this.config.completionHoldMs) {
+          return `${this.executionLabel(this.executionSource)} ended with errors`;
+        }
+        if (this.diagnosticErrors > 0) return `Reviewing with ${this.diagnosticErrors} diagnostic error${this.diagnosticErrors === 1 ? "" : "s"}`;
+        return "Navigation or low-intensity editor activity";
+    }
+  }
+
+  private executionLabel(source: ExecutionSource | undefined = this.activeSource()): string {
+    if (source === "terminal") return "Terminal command";
+    if (source === "debug") return "Debug session";
+    return "Task";
+  }
+
+  private activeSource(): ExecutionSource | undefined {
+    if (this.executions.tasks > 0) return "task";
+    if (this.executions.terminalCommands > 0) return "terminal";
+    if (this.executions.debugSessions > 0) return "debug";
+    return this.executionSource;
   }
 
   private pruneHistory(now: number): void {

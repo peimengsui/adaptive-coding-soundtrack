@@ -10,11 +10,40 @@ export interface CodingContext {
   confidence: number;
   activeLanguage?: string;
   activeTask: boolean;
+  activeExecution: boolean;
+  diagnosticErrors: number;
+  diagnosticWarnings: number;
+  reason: string;
   lastActivityAt: number;
 }
 
-export type ActivityKind = "edit" | "save" | "navigation" | "task_started" | "task_completed" | "terminal_opened" | "terminal_closed";
-export interface ActivityEvent { kind: ActivityKind; at: number; language?: string; }
+export type ActivityKind =
+  | "edit"
+  | "save"
+  | "navigation"
+  | "task_started"
+  | "task_completed"
+  | "terminal_opened"
+  | "terminal_closed"
+  | "terminal_command_started"
+  | "terminal_command_completed"
+  | "debug_started"
+  | "debug_completed"
+  | "diagnostics_changed"
+  | "window_focused"
+  | "window_blurred";
+
+export type ExecutionOutcome = "success" | "failure" | "unknown";
+export type ExecutionSource = "task" | "terminal" | "debug";
+
+export interface ActivityEvent {
+  kind: ActivityKind;
+  at: number;
+  language?: string;
+  outcome?: ExecutionOutcome;
+  diagnosticErrors?: number;
+  diagnosticWarnings?: number;
+}
 
 export type MusicalIntent = "rest" | "flow" | "focus" | "anticipation" | "review" | "celebration";
 export interface UserPreference { style: MusicStyle; }
@@ -41,6 +70,11 @@ export interface ProceduralSynthesis {
   rhythmDensity: number;
   melodyDensity: number;
   warmth: number;
+  swing: number;
+  humanize: number;
+  reverb: number;
+  lowpassHz: number;
+  variationSeed: number;
 }
 
 export interface Track {

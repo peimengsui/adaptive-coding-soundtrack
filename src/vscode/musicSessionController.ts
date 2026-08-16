@@ -3,7 +3,12 @@ import { MusicDirector } from "../core/musicDirector";
 import { CodingContext, MusicProvider, MusicRequest, MusicStyle, Track } from "../core/types";
 import { WebviewAudioPlayer } from "./webviewAudioPlayer";
 
-export interface SessionSettings { volume: number; adaptiveSwitching: boolean; fadeDurationMs: number; }
+export interface SessionSettings {
+  volume: number;
+  adaptiveSwitching: boolean;
+  fadeDurationMs: number;
+  minimumAdaptiveConfidence: number;
+}
 const STYLE_LABELS: Record<MusicStyle, string> = { ambient: "Ambient", jazz: "Jazz", lofi: "Lo-fi" };
 const STATE_LABELS: Record<CodingContext["state"], string> = { idle: "Idle", active_coding: "Active Coding", deep_focus: "Deep Focus", waiting: "Waiting", reviewing: "Reviewing", completed: "Completed" };
 
@@ -23,6 +28,7 @@ export class MusicSessionController implements vscode.Disposable {
     private readonly statusBar: vscode.StatusBarItem,
     private context: CodingContext,
     private settings: SessionSettings,
+    private readonly output: vscode.OutputChannel,
   ) {
     this.statusBar.command = "adaptiveMusic.togglePause";
     this.statusBar.hide();
@@ -36,6 +42,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.currentRequestSignature = undefined;
     this.generation += 1;
     this.player.reveal();
+    this.output.appendLine(`[session] Started with ${STYLE_LABELS[style]}`);
     this.updateStatus();
     await this.adapt(true);
   }
@@ -47,6 +54,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.currentRequestSignature = undefined;
     this.currentTrack = undefined;
     this.player.stop();
+    this.output.appendLine("[session] Stopped");
     this.player.dispose();
     this.statusBar.hide();
   }
@@ -86,6 +94,11 @@ export class MusicSessionController implements vscode.Disposable {
 
   public onContextChanged(context: CodingContext): void {
     const stateChanged = context.state !== this.context.state;
+    if (stateChanged) {
+      this.output.appendLine(
+        `[context] ${this.context.state} -> ${context.state} (${context.reason}; confidence ${context.confidence.toFixed(2)})`,
+      );
+    }
     this.context = context;
     this.updateStatus();
     if (this.active && (this.settings.adaptiveSwitching || !this.currentTrack)) void this.adapt(stateChanged);
@@ -97,6 +110,7 @@ export class MusicSessionController implements vscode.Disposable {
   }
   public getStyle(): MusicStyle { return this.style; }
   public getContext(): CodingContext { return this.context; }
+  public isActive(): boolean { return this.active; }
 
   public dispose(): void {
     this.active = false;
@@ -115,6 +129,17 @@ export class MusicSessionController implements vscode.Disposable {
       this.updateStatus();
       return;
     }
+    const confidenceGated =
+      this.currentTrack !== undefined &&
+      this.context.confidence < this.settings.minimumAdaptiveConfidence &&
+      this.context.state !== "completed" &&
+      this.context.state !== "waiting";
+    if (confidenceGated) {
+      this.output.appendLine(
+        `[director] Kept the current track: confidence ${this.context.confidence.toFixed(2)} is below ${this.settings.minimumAdaptiveConfidence.toFixed(2)}`,
+      );
+      return;
+    }
     const signature = this.requestSignature(request);
     if (!force && signature === this.currentRequestSignature) return;
     const requestGeneration = ++this.generation;
@@ -124,6 +149,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.currentTrack = track;
     this.currentRequestSignature = signature;
     this.player.play(track, this.settings.volume, this.settings.fadeDurationMs);
+    this.output.appendLine(`[director] Playing ${track.id}`);
     this.updateStatus();
   }
 
@@ -139,8 +165,11 @@ export class MusicSessionController implements vscode.Disposable {
     this.statusBar.tooltip = new vscode.MarkdownString([
       "**Adaptive Coding Soundtrack**", "", `State: ${STATE_LABELS[this.context.state]}`,
       `Intensity: ${Math.round(this.context.intensity * 100)}%`, `Confidence: ${Math.round(this.context.confidence * 100)}%`,
+      `Reason: ${this.context.reason}`,
       this.context.activeLanguage ? `Language: ${this.context.activeLanguage}` : "",
-      this.context.activeTask ? "VS Code task running" : "", "", "Click to pause or resume.",
+      this.context.activeExecution ? "Execution running" : "",
+      this.context.diagnosticErrors > 0 ? `Diagnostic errors: ${this.context.diagnosticErrors}` : "",
+      "", "Click to pause or resume.",
     ].filter(Boolean).join("  \n"));
     this.statusBar.show();
   }
