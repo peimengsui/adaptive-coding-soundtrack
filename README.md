@@ -160,7 +160,7 @@ npm run verify            # clean, lint, unit test, package, validate
 
 The integration runner accepts `VSCODE_TEST_VERSION`; CI tests both VS Code 1.95.3 and the current stable release. Cursor compatibility remains a manual smoke test because Cursor does not provide the same headless Extension Host distribution.
 
-GitHub Actions workflows provide pull-request verification, a validated VSIX artifact, dependency updates, and tag-driven GitHub releases. A public Marketplace release still requires replacing the placeholder `publisher`, adding the eventual repository URL, and configuring publisher credentials outside this repository.
+GitHub Actions workflows provide pull-request verification, a validated VSIX artifact, dependency updates, and tag-driven GitHub releases. The `adaptive-soundtrack` publisher and public repository metadata are configured; Marketplace credentials remain outside this repository.
 
 ## Project structure
 

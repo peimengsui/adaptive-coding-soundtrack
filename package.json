@@ -4,6 +4,14 @@
   "description": "Local-first music that adapts to your coding flow.",
   "version": "0.2.0",
   "publisher": "adaptive-soundtrack",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/peimengsui/adaptive-coding-soundtrack.git"
+  },
+  "homepage": "https://github.com/peimengsui/adaptive-coding-soundtrack#readme",
+  "bugs": {
+    "url": "https://github.com/peimengsui/adaptive-coding-soundtrack/issues"
+  },
   "license": "MIT",
   "icon": "media/icon.png",
   "extensionKind": [

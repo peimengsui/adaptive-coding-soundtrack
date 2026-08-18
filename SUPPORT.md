@@ -9,3 +9,5 @@ Before reporting a problem:
 5. Reproduce with a synthetic workspace when possible.
 
 Include state transitions and audio lifecycle messages, but do not include source code, terminal contents, credentials, or private file paths.
+
+File reports at https://github.com/peimengsui/adaptive-coding-soundtrack/issues.
