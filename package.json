@@ -203,6 +203,7 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "clean": "node scripts/clean.mjs",
     "compile": "tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",
