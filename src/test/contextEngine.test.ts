@@ -7,6 +7,7 @@ const TEST_CONFIG: ContextEngineConfig = {
   completionHoldMs: 800, editWindowMs: 1_200, activeEditCount: 3,
   editContinuityGapMs: 1_500, navigationWindowMs: 1_000, reviewingAfterEditMs: 300,
   transitionDebounceMs: 0, unfocusedIdleTimeoutMs: 1_000,
+  terminalAdaptation: "longRunningOnly", terminalMinimumDurationMs: 500,
 };
 
 test("repeated typing becomes active coding", () => {
@@ -58,7 +59,7 @@ test("prolonged inactivity becomes idle", () => {
   assert.equal(engine.getContext(5_100).state, "idle");
 });
 
-test("terminal shell execution contributes waiting and completion signals", () => {
+test("a long terminal execution contributes waiting and a completion cue without restarting state", () => {
   const engine = new ContextEngine(TEST_CONFIG);
   engine.record({ kind: "terminal_command_started", at: 100 });
   engine.record({ kind: "edit", at: 200 });
@@ -67,9 +68,43 @@ test("terminal shell execution contributes waiting and completion signals", () =
   assert.equal(waiting.activeTask, false);
   assert.equal(waiting.activeExecution, true);
 
-  const completed = engine.record({ kind: "terminal_command_completed", at: 1_300, outcome: "success" });
-  assert.equal(completed.state, "completed");
-  assert.match(completed.reason, /Terminal command completed/);
+  const completed = engine.record({
+    kind: "terminal_command_completed", at: 1_300, outcome: "success", durationMs: 1_200,
+  });
+  assert.equal(completed.state, "active_coding");
+  assert.equal(completed.lastExecution?.source, "terminal");
+  assert.equal(completed.lastExecution?.durationMs, 1_200);
+  assert.equal(completed.lastExecution?.cue, "completion");
+});
+
+test("a quick terminal execution does not enter completed or request a cue", () => {
+  const engine = new ContextEngine(TEST_CONFIG);
+  engine.record({ kind: "terminal_command_started", at: 100 });
+  const context = engine.record({
+    kind: "terminal_command_completed", at: 200, outcome: "success", durationMs: 100,
+  });
+  assert.equal(context.state, "reviewing");
+  assert.equal(context.lastExecution?.cue, undefined);
+});
+
+test("all terminal adaptation mode cues quick commands with known outcomes", () => {
+  const engine = new ContextEngine({ ...TEST_CONFIG, terminalAdaptation: "all" });
+  engine.record({ kind: "terminal_command_started", at: 100 });
+  const context = engine.record({
+    kind: "terminal_command_completed", at: 200, outcome: "failure", durationMs: 100,
+  });
+  assert.equal(context.state, "reviewing");
+  assert.equal(context.lastExecution?.cue, "failure");
+});
+
+test("off terminal adaptation mode ignores shell execution events", () => {
+  const engine = new ContextEngine({ ...TEST_CONFIG, terminalAdaptation: "off" });
+  assert.equal(engine.record({ kind: "terminal_command_started", at: 100 }).activeExecution, false);
+  const context = engine.record({
+    kind: "terminal_command_completed", at: 200, outcome: "success", durationMs: 100,
+  });
+  assert.equal(context.state, "idle");
+  assert.equal(context.lastExecution, undefined);
 });
 
 test("failed execution does not play the completion state", () => {

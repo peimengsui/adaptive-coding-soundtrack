@@ -1,12 +1,14 @@
 import * as vscode from "vscode";
-import { Track } from "../core/types";
+import { PlaybackCue, Track } from "../core/types";
 
 export type PlayerControl = "pause" | "resume" | "stop" | "setVolume";
 export type PlayerControlHandler = (control: PlayerControl, value?: number) => void;
+export type PlayerPauseReason = "user" | "idle";
 
 interface DesiredPlayback {
   track?: Track;
   paused: boolean;
+  pauseReason?: PlayerPauseReason;
   volume: number;
   fadeDurationMs: number;
 }
@@ -16,6 +18,7 @@ export class WebviewAudioPlayer implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
   private ready = false;
   private disposing = false;
+  private pendingCue?: { cue: PlaybackCue; volume: number };
   private readonly desired: DesiredPlayback = {
     paused: false,
     volume: 0.45,
@@ -58,26 +61,41 @@ export class WebviewAudioPlayer implements vscode.Disposable {
   public play(track: Track, volume: number, fadeDurationMs: number): void {
     this.desired.track = track;
     this.desired.paused = false;
+    this.desired.pauseReason = undefined;
     this.desired.volume = volume;
     this.desired.fadeDurationMs = fadeDurationMs;
     this.reveal();
     this.sendDesiredPlayback();
   }
 
-  public pause(): void {
+  public pause(reason: PlayerPauseReason = "user"): void {
     this.desired.paused = true;
-    this.post({ type: "pause", fadeDurationMs: this.desired.fadeDurationMs });
+    this.desired.pauseReason = reason;
+    this.post({ type: "pause", reason, fadeDurationMs: this.desired.fadeDurationMs });
   }
 
   public resume(): void {
     this.desired.paused = false;
+    this.desired.pauseReason = undefined;
     if (this.desired.track) this.post({ type: "resume", fadeDurationMs: this.desired.fadeDurationMs });
   }
 
   public stop(): void {
     this.desired.track = undefined;
     this.desired.paused = false;
+    this.desired.pauseReason = undefined;
+    this.pendingCue = undefined;
     this.post({ type: "stop", fadeDurationMs: this.desired.fadeDurationMs });
+  }
+
+  public playCue(cue: PlaybackCue, volume: number): void {
+    if (!this.desired.track || this.desired.paused) return;
+    const pending = { cue, volume: Math.min(1, Math.max(0, volume)) };
+    if (!this.ready) {
+      this.pendingCue = pending;
+      return;
+    }
+    this.post({ type: "cue", ...pending });
   }
 
   public setVolume(volume: number): void {
@@ -98,7 +116,17 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     this.post({ type: "volume", volume: this.desired.volume });
     if (this.desired.track) {
       this.post({ type: "play", track: this.desired.track, fadeDurationMs: this.desired.fadeDurationMs });
-      if (this.desired.paused) this.post({ type: "pause", fadeDurationMs: this.desired.fadeDurationMs });
+      if (this.desired.paused) {
+        this.post({
+          type: "pause",
+          reason: this.desired.pauseReason ?? "user",
+          fadeDurationMs: this.desired.fadeDurationMs,
+        });
+      }
+    }
+    if (this.pendingCue && !this.desired.paused) {
+      this.post({ type: "cue", ...this.pendingCue });
+      this.pendingCue = undefined;
     }
   }
 

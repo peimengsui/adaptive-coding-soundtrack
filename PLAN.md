@@ -1,30 +1,31 @@
-# Adaptive Coding Soundtrack 0.2 Release Plan
+# Adaptive Coding Soundtrack 0.2.1 Release Plan
 
 ## Objective
 
-Turn the working MVP into a hardened local-first beta without adding telemetry, proprietary Cursor dependencies, external music services, or a user pilot.
+Ship a focused continuity patch so ordinary terminal use does not restart the soundtrack, while preserving useful Waiting feedback for long-running work.
 
 ## Completed scope
 
-- **Release hardening:** expanded unit coverage, real Extension Host tests, package-content validation, zero production vulnerability audit, CI, release automation, Dependabot, support/security/privacy documents, icon, and clean VSIX contents.
-- **Context accuracy:** task outcomes, terminal shell execution, debug lifecycle, focus, active-file diagnostic counts, failure-aware completion, explainable reasons, transition hysteresis, confidence gating, and three local sensitivity profiles.
-- **Audio quality:** external maintainable player assets, deterministic variation, schedule-ahead timing, beat-aligned transitions, stereo placement, filtering, compression, convolution reverb, persisted Webview preferences, and lifecycle diagnostics.
-- **Distribution:** versioned `0.2.0` manifest, UI extension placement, untrusted-workspace declaration, gallery artwork, CI artifact, tag-driven GitHub releases, issue template, and release documentation.
+- **Terminal policy:** configurable `off`, `longRunningOnly`, and `all` modes; five-second long-command default; terminal completion never enters the global Completed state.
+- **Continuous music:** same-style context changes morph the live procedural scene at a beat boundary without resetting its sequence; style changes retain crossfades.
+- **Event cues:** eligible terminal success and failure events use quiet one-shot cues with configurable volume, deduplication, and a 20-second cooldown.
+- **Privacy:** shell integration records lifecycle timing and outcome only, never command text or terminal output.
+- **Verification:** strict compilation, player syntax checking, 20 deterministic unit tests, Extension Host coverage, dependency audit, and validated VSIX packaging.
 
 ## Acceptance criteria
 
-- Strict compilation and player syntax validation pass.
-- All deterministic core tests pass.
-- Extension activation, command registration, configuration defaults, and player lifecycle pass in real Extension Hosts.
-- Compatibility tests pass on VS Code 1.95.3 and current stable.
-- Production dependency audit reports no vulnerabilities.
-- VSIX contains only required runtime, media, license, and documentation files and remains below 2 MB.
-- Cursor and VS Code retain working start/style/audio/control behavior.
-- No source, paths, terminal contents, diagnostic messages, or prompts are stored or transmitted.
+- A short terminal command neither enters Completed nor requests a cue.
+- A long command can enter Waiting and produces at most one eligible completion or failure cue.
+- Repeated eligible completions inside the cooldown do not produce repeated cues.
+- Context changes inside Ambient, Jazz, or Lo-fi preserve the running musical sequence.
+- Changing styles still produces a beat-aligned crossfade.
+- The extension passes unit and Extension Host tests on VS Code 1.95.3 and current stable.
+- The packaged extension remains content-free, local-first, and below 2 MB.
 
-## Deferred
+## Deferred to 0.3.x
 
-- Small user pilot and telemetry/feedback design
-- Marketplace publication credentials and final publisher/repository metadata
-- External or AI music providers
+- Opt-in bring-your-own-token AI music providers
+- Provider credentials in VS Code SecretStorage
+- Content-free provider request schema, caching, budgets, provenance, and offline fallback
 - Cursor-specific context until a supported API exists
+- Small user pilot and opt-in feedback design

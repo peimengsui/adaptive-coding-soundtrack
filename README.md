@@ -10,11 +10,14 @@ No music catalog, account, API key, or network connection is required.
 
 - Six explainable states: Idle, Active Coding, Deep Focus, Waiting, Reviewing, and Completed
 - Signals from edits, saves, navigation, tasks, shell-integrated terminal commands, debug sessions, editor focus, and active-file diagnostic severity counts
-- Failure-aware completion: failed tasks and commands do not trigger a celebration cue
+- Terminal continuity: short commands do not trigger completion transitions or cues, while long commands can enter Waiting
+- Throttled one-shot terminal completion and failure cues that layer over the soundtrack
+- An explicit Resume override for Idle auto-pause, with accurate pause-reason messaging
 - Responsive, Balanced, and Calm local sensitivity profiles
 - Transition hysteresis and confidence gating to reduce musical churn
 - Ambient, Jazz, and Lo-fi procedural arrangements with deterministic variation
-- Schedule-ahead timing, beat-aligned crossfades, stereo placement, compression, filtering, and reverb
+- Persistent same-style sequences with in-place morphing, plus beat-aligned style crossfades
+- Schedule-ahead timing, stereo placement, compression, filtering, and reverb
 - Commands for playback, style, volume, calibration, state explanation, and diagnostics
 - No runtime npm dependencies, external requests, or bundled recordings
 
@@ -49,13 +52,15 @@ WebviewAudioPlayer       local Web Audio scheduling and mixing
 | Active Coding | Recent edits; repeated edits raise confidence and intensity |
 | Deep Focus | Sustained editing with a recent change |
 | Waiting | A task, terminal command, or debug session is active and editing has paused |
-| Completed | A task, terminal command, or debug session ends successfully |
+| Completed | A task or debug session ends successfully |
 | Reviewing | Navigation, low-intensity activity, diagnostics, or a failed execution |
 | Idle | No recent activity; a shorter timeout applies while the editor is unfocused |
 
-Critical transitions—Idle, Waiting, and Completed—are immediate. Other transitions are debounced. Low-confidence non-critical changes keep the current track instead of forcing a switch.
+Critical transitions—Idle, Waiting, and Completed—are immediate. Other transitions are debounced. Low-confidence non-critical changes keep the current track instead of forcing a switch. Failed tasks move to Reviewing rather than Completed.
 
-Terminal command events require VS Code shell integration. The extension observes lifecycle and exit code only; it deliberately does not read command text or terminal output. Diagnostic integration counts Error and Warning severities for the active document without reading messages.
+Terminal command events require VS Code shell integration. By default, quick commands do not trigger a completion transition or cue; a command running for at least five seconds can enter Waiting and plays one throttled completion or failure cue when it ends. The extension observes lifecycle, duration, and exit code only; it deliberately does not read command text or terminal output. Set `adaptiveMusic.terminalAdaptation` to `off` to ignore terminal executions or `all` to cue every command with a known outcome.
+
+Diagnostic integration counts Error and Warning severities for the active document without reading messages.
 
 The extension does not claim to observe Cursor Agent internals. `ActivityCollector` is isolated so a future supported `CursorContextAdapter` can provide normalized signals without changing music logic.
 
@@ -63,7 +68,7 @@ The extension does not claim to observe Cursor Agent internals. `ActivityCollect
 
 There are no soundtrack files. `LocalProceduralMusicProvider` creates deterministic recipes containing tempo, scale, chord progression, density, swing, humanization, timbre, filter, reverb, and variation seed. `media/player.js` schedules original tones and seeded noise with the Web Audio API.
 
-Track changes align to the next beat and crossfade through separate scene buses. A shared compressor controls peaks; per-scene filtering, stereo placement, and convolution reverb provide separation. The player persists volume and its last track identifier in Webview state and exposes AudioContext lifecycle diagnostics.
+When coding context changes within the selected style, the existing sequence keeps its musical position and morphs the synthesis recipe at a beat boundary instead of starting over. Style changes still crossfade through separate scene buses. Completion and failure cues use a separate one-shot layer, so they do not reset the background arrangement. A shared compressor controls peaks; per-scene filtering, stereo placement, and convolution reverb provide separation. The player persists volume and its last track identifier in Webview state and exposes AudioContext lifecycle diagnostics.
 
 Web Audio is part of the editor's embedded Chromium runtime. It has no usage fee. The extension includes no third-party recordings.
 
@@ -76,12 +81,12 @@ npm ci
 npm run verify
 ```
 
-Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.2.0.vsix`.
+Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.2.1.vsix`.
 
 VS Code CLI alternative:
 
 ```bash
-code --install-extension adaptive-coding-soundtrack-0.2.0.vsix
+code --install-extension adaptive-coding-soundtrack-0.2.1.vsix
 ```
 
 ## Run from source
@@ -110,6 +115,7 @@ For a faster demo:
 {
   "adaptiveMusic.deepFocusSeconds": 15,
   "adaptiveMusic.waitingDetectionSeconds": 3,
+  "adaptiveMusic.terminalMinimumDurationSeconds": 3,
   "adaptiveMusic.completedCueSeconds": 5,
   "adaptiveMusic.idleTimeoutSeconds": 30
 }
@@ -142,6 +148,10 @@ For a faster demo:
 | `adaptiveMusic.idleTimeoutSeconds` | `120` | Inactivity before Idle |
 | `adaptiveMusic.unfocusedIdleSeconds` | `30` | Idle delay while the editor is unfocused |
 | `adaptiveMusic.waitingDetectionSeconds` | `8` | Editing pause during execution before Waiting |
+| `adaptiveMusic.terminalAdaptation` | `longRunningOnly` | Ignore, adapt only to long-running completions, or cue all terminal executions |
+| `adaptiveMusic.terminalMinimumDurationSeconds` | `5` | Long-command threshold for completion/failure cues |
+| `adaptiveMusic.completionCueCooldownSeconds` | `20` | Minimum interval between terminal cues |
+| `adaptiveMusic.eventCueVolume` | `0.18` | Relative volume of completion/failure cues |
 | `adaptiveMusic.deepFocusSeconds` | `90` | Sustained editing before Deep Focus |
 | `adaptiveMusic.completedCueSeconds` | `8` | Duration of Completed |
 | `adaptiveMusic.fadeDurationMs` | `1400` | Playback crossfade duration |
@@ -151,7 +161,7 @@ For a faster demo:
 ```bash
 npm run compile           # TypeScript build
 npm run lint              # strict type-check + player JavaScript syntax
-npm test                  # 15 deterministic core tests
+npm test                  # 20 deterministic core tests
 npm run test:integration  # real Extension Host activation/Webview tests
 npm run package           # build the VSIX
 npm run check:package     # validate required/prohibited VSIX contents and size
@@ -204,14 +214,14 @@ The extension records no source content and makes no network requests. Detailed 
 - Context remains heuristic and cannot determine developer intent semantically.
 - Terminal command signals depend on shell integration.
 - Standard VS Code APIs do not expose other extensions' complete test-result lifecycle, so configured test tasks are observed as tasks.
-- Debug termination does not expose success/failure and is treated as a neutral successful completion cue.
+- Debug termination does not expose success/failure and is treated as a neutral successful Completed state.
 - Chromium may require one **Enable Audio** click per new player Webview.
 - A session is not automatically restarted after an editor reload.
 - Cursor Agent internal state is unavailable through standard APIs.
 
-## Future AI Music Integration
+## Future AI Music Integration (0.3.x)
 
-Future opt-in providers could translate `MusicRequest` into prompts or controls for Google Lyria / Lyria RealTime, ElevenLabs Music, or Stable Audio. They should use VS Code Secrets, cache generated tracks, display provider cost and provenance, offer the local provider as an offline fallback, and guarantee that source code and workspace contents never enter generation requests.
+Future opt-in bring-your-own-token providers could translate `MusicRequest` into prompts or controls for services such as Google Lyria, ElevenLabs Music, or Stable Audio. They should use VS Code SecretStorage, send only an explicit content-free musical request, cache generated tracks, display provider cost and provenance, offer the local provider as an offline fallback, and isolate each provider behind a small adapter.
 
 ## License
 

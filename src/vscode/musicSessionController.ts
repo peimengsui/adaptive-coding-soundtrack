@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
+import { isExecutionCueAllowed } from "../core/cuePolicy";
 import { MusicDirector } from "../core/musicDirector";
-import { CodingContext, MusicProvider, MusicRequest, MusicStyle, Track } from "../core/types";
+import { CodingContext, MusicProvider, MusicRequest, MusicStyle, PlaybackCue, Track } from "../core/types";
 import { WebviewAudioPlayer } from "./webviewAudioPlayer";
 
 export interface SessionSettings {
@@ -8,7 +9,10 @@ export interface SessionSettings {
   adaptiveSwitching: boolean;
   fadeDurationMs: number;
   minimumAdaptiveConfidence: number;
+  completionCueCooldownMs: number;
+  eventCueVolume: number;
 }
+export type PlaybackState = "inactive" | "playing" | "user_paused" | "context_paused";
 const STYLE_LABELS: Record<MusicStyle, string> = { ambient: "Ambient", jazz: "Jazz", lofi: "Lo-fi" };
 const STATE_LABELS: Record<CodingContext["state"], string> = { idle: "Idle", active_coding: "Active Coding", deep_focus: "Deep Focus", waiting: "Waiting", reviewing: "Reviewing", completed: "Completed" };
 
@@ -16,9 +20,12 @@ export class MusicSessionController implements vscode.Disposable {
   private active = false;
   private userPaused = false;
   private contextPaused = false;
+  private idlePlaybackOverride = false;
   private style: MusicStyle = "ambient";
   private currentRequestSignature?: string;
   private currentTrack?: Track;
+  private lastHandledExecutionId?: number;
+  private lastCueAt?: number;
   private generation = 0;
 
   public constructor(
@@ -38,8 +45,11 @@ export class MusicSessionController implements vscode.Disposable {
     this.active = true;
     this.userPaused = false;
     this.contextPaused = false;
+    this.idlePlaybackOverride = false;
     this.style = style;
     this.currentRequestSignature = undefined;
+    this.lastHandledExecutionId = this.context.lastExecution?.id;
+    this.lastCueAt = undefined;
     this.generation += 1;
     this.player.reveal();
     this.output.appendLine(`[session] Started with ${STYLE_LABELS[style]}`);
@@ -53,6 +63,8 @@ export class MusicSessionController implements vscode.Disposable {
     this.generation += 1;
     this.currentRequestSignature = undefined;
     this.currentTrack = undefined;
+    this.lastCueAt = undefined;
+    this.idlePlaybackOverride = false;
     this.player.stop();
     this.output.appendLine("[session] Stopped");
     this.player.dispose();
@@ -64,10 +76,20 @@ export class MusicSessionController implements vscode.Disposable {
       void vscode.window.showInformationMessage("Start an Adaptive Music session first.");
       return;
     }
-    this.userPaused = forcePaused ?? !this.userPaused;
-    if (this.userPaused) this.player.pause();
-    else if (!this.contextPaused && this.currentTrack) this.player.resume();
-    else await this.adapt(true);
+    const shouldPause = forcePaused === true || (
+      forcePaused === undefined && !this.userPaused && !this.contextPaused
+    );
+    if (shouldPause) {
+      this.userPaused = true;
+      this.idlePlaybackOverride = false;
+      this.player.pause("user");
+    } else {
+      this.userPaused = false;
+      this.idlePlaybackOverride = this.context.state === "idle";
+      this.contextPaused = false;
+      if (this.context.state === "idle" || !this.currentTrack) await this.adapt(true);
+      else this.player.resume();
+    }
     this.updateStatus();
   }
 
@@ -92,7 +114,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.updateStatus();
   }
 
-  public onContextChanged(context: CodingContext): void {
+  public async onContextChanged(context: CodingContext): Promise<void> {
     const stateChanged = context.state !== this.context.state;
     if (stateChanged) {
       this.output.appendLine(
@@ -100,8 +122,10 @@ export class MusicSessionController implements vscode.Disposable {
       );
     }
     this.context = context;
+    if (context.state !== "idle") this.idlePlaybackOverride = false;
+    this.handleExecutionCue(context);
     this.updateStatus();
-    if (this.active && (this.settings.adaptiveSwitching || !this.currentTrack)) void this.adapt(stateChanged);
+    if (this.active && (this.settings.adaptiveSwitching || !this.currentTrack)) await this.adapt(stateChanged);
   }
 
   public showPlayer(): void {
@@ -111,6 +135,12 @@ export class MusicSessionController implements vscode.Disposable {
   public getStyle(): MusicStyle { return this.style; }
   public getContext(): CodingContext { return this.context; }
   public isActive(): boolean { return this.active; }
+  public getPlaybackState(): PlaybackState {
+    if (!this.active) return "inactive";
+    if (this.userPaused) return "user_paused";
+    if (this.contextPaused) return "context_paused";
+    return "playing";
+  }
 
   public dispose(): void {
     this.active = false;
@@ -122,10 +152,11 @@ export class MusicSessionController implements vscode.Disposable {
   private async adapt(force: boolean): Promise<void> {
     if (!this.active || this.userPaused) return;
     const request = this.director.createRequest(this.context, { style: this.style });
-    if (!request.shouldPlay) {
+    const idleOverride = this.context.state === "idle" && this.idlePlaybackOverride;
+    if (!request.shouldPlay && !idleOverride) {
       this.contextPaused = true;
       this.currentRequestSignature = undefined;
-      this.player.pause();
+      this.player.pause("idle");
       this.updateStatus();
       return;
     }
@@ -158,6 +189,23 @@ export class MusicSessionController implements vscode.Disposable {
     return `${request.style}:${request.intent}:${band}`;
   }
 
+  private handleExecutionCue(context: CodingContext): void {
+    const execution = context.lastExecution;
+    if (!execution || execution.id === this.lastHandledExecutionId) return;
+    this.lastHandledExecutionId = execution.id;
+    if (!execution.cue || !this.active || this.userPaused || this.contextPaused || !this.currentTrack) return;
+
+    if (!isExecutionCueAllowed(execution, this.lastCueAt, this.settings.completionCueCooldownMs)) {
+      this.output.appendLine(`[director] Suppressed terminal ${execution.cue} cue during cooldown`);
+      return;
+    }
+
+    this.lastCueAt = execution.completedAt;
+    this.player.playCue(execution.cue, this.settings.eventCueVolume);
+    const duration = execution.durationMs === undefined ? "unknown duration" : `${(execution.durationMs / 1_000).toFixed(1)}s`;
+    this.output.appendLine(`[director] Played terminal ${cueLabel(execution.cue)} cue after ${duration}`);
+  }
+
   private updateStatus(): void {
     if (!this.active) { this.statusBar.hide(); return; }
     const pausedSuffix = this.userPaused ? " · Paused" : this.contextPaused ? " · Auto-paused" : "";
@@ -177,3 +225,4 @@ export class MusicSessionController implements vscode.Disposable {
 
 export function styleLabel(style: MusicStyle): string { return STYLE_LABELS[style]; }
 export function stateLabel(state: CodingContext["state"]): string { return STATE_LABELS[state]; }
+function cueLabel(cue: PlaybackCue): string { return cue === "failure" ? "failure" : "completion"; }

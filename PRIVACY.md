@@ -2,7 +2,7 @@
 
 Adaptive Coding Soundtrack is local-first and makes no network requests.
 
-The extension processes activity type, timestamp, public language ID, execution lifecycle, active-file diagnostic severity counts, and editor focus. It does not store or transmit source text, file paths, diagnostic messages, terminal command text, prompts, credentials, or workspace contents.
+The extension processes activity type, timestamp, public language ID, execution lifecycle, duration and outcome, active-file diagnostic severity counts, and editor focus. It does not store or transmit source text, file paths, diagnostic messages, terminal command text, terminal output, prompts, credentials, or workspace contents.
 
 The built-in provider generates audio locally with Web Audio. Settings are stored through VS Code's configuration system. The output diagnostic channel contains state names, confidence values, reasons, track identifiers, and Web Audio lifecycle status only.
 

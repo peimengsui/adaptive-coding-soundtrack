@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Kept same-style music on one continuous sequence and morphed its tempo, harmony, density, filtering, and ambience in place.
+- Prevented short shell-integrated terminal commands from entering Completed or restarting the soundtrack.
+- Added configurable terminal adaptation modes, a long-command threshold, throttled completion/failure cues, and cue volume.
+- Fixed Idle auto-pause so an explicit Resume works, and made the player display the real pause reason.
+- Continued to observe terminal lifecycle, duration, and outcome only—never command text or output.
+- Expanded regression coverage for long, short, disabled, and all-command terminal policies.
+
 ## 0.2.0
 
 - Added task outcome, shell execution, debug, diagnostics, and window-focus context signals.

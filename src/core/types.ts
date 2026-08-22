@@ -13,8 +13,21 @@ export interface CodingContext {
   activeExecution: boolean;
   diagnosticErrors: number;
   diagnosticWarnings: number;
+  lastExecution?: ExecutionSummary;
   reason: string;
   lastActivityAt: number;
+}
+
+export type TerminalAdaptation = "off" | "longRunningOnly" | "all";
+export type PlaybackCue = "completion" | "failure";
+
+export interface ExecutionSummary {
+  id: number;
+  source: ExecutionSource;
+  outcome: ExecutionOutcome;
+  completedAt: number;
+  durationMs?: number;
+  cue?: PlaybackCue;
 }
 
 export type ActivityKind =
@@ -41,6 +54,7 @@ export interface ActivityEvent {
   at: number;
   language?: string;
   outcome?: ExecutionOutcome;
+  durationMs?: number;
   diagnosticErrors?: number;
   diagnosticWarnings?: number;
 }

@@ -7,6 +7,7 @@ export class ActivityCollector implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly processReportedTasks = new WeakSet<vscode.TaskExecution>();
   private readonly pendingTaskFallbacks = new Map<vscode.TaskExecution, ReturnType<typeof setTimeout>>();
+  private readonly terminalExecutionStarts = new WeakMap<vscode.TerminalShellExecution, number>();
   public constructor(private readonly listener: ActivityListener) {}
 
   public start(): void {
@@ -79,14 +80,20 @@ export class ActivityCollector implements vscode.Disposable {
     };
     if (shellWindow.onDidStartTerminalShellExecution) {
       this.disposables.push(
-        shellWindow.onDidStartTerminalShellExecution(() => this.emit("terminal_command_started")),
+        shellWindow.onDidStartTerminalShellExecution((event) => {
+          this.terminalExecutionStarts.set(event.execution, Date.now());
+          this.emit("terminal_command_started");
+        }),
       );
     }
     if (shellWindow.onDidEndTerminalShellExecution) {
       this.disposables.push(
         shellWindow.onDidEndTerminalShellExecution((event) => {
+          const startedAt = this.terminalExecutionStarts.get(event.execution);
+          this.terminalExecutionStarts.delete(event.execution);
           this.emit("terminal_command_completed", undefined, {
             outcome: event.exitCode === 0 ? "success" : event.exitCode === undefined ? "unknown" : "failure",
+            durationMs: startedAt === undefined ? undefined : Math.max(0, Date.now() - startedAt),
           });
         }),
       );

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { ContextEngine, ContextEngineConfig, DEFAULT_CONTEXT_ENGINE_CONFIG } from "./core/contextEngine";
 import { LocalProceduralMusicProvider } from "./core/localProceduralMusicProvider";
 import { MusicDirector } from "./core/musicDirector";
-import { CodingContext, MUSIC_STYLES, MusicStyle } from "./core/types";
+import { CodingContext, MUSIC_STYLES, MusicStyle, TerminalAdaptation } from "./core/types";
 import { ActivityCollector } from "./vscode/activityCollector";
 import { MusicSessionController, SessionSettings, stateLabel, styleLabel } from "./vscode/musicSessionController";
 import { PlayerControl, WebviewAudioPlayer } from "./vscode/webviewAudioPlayer";
@@ -41,19 +41,40 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
         controller.stop();
         return !controller.isActive();
       }),
+      vscode.commands.registerCommand("adaptiveMusic.__testCue", () => {
+        player.playCue("completion", 0.18);
+        return true;
+      }),
+      vscode.commands.registerCommand("adaptiveMusic.__testSetIdle", async () => {
+        const context = controller.getContext();
+        await controller.onContextChanged({
+          ...context,
+          state: "idle",
+          intensity: 0,
+          confidence: 0.95,
+          activeTask: false,
+          activeExecution: false,
+          reason: "No recent editor activity",
+        });
+        return controller.getPlaybackState();
+      }),
+      vscode.commands.registerCommand("adaptiveMusic.__testResume", async () => {
+        await controller.togglePause(false);
+        return controller.getPlaybackState();
+      }),
     );
   }
 
   const collector = new ActivityCollector((event) => {
     currentContext = engine.record(event);
-    controller.onContextChanged(currentContext);
+    void controller.onContextChanged(currentContext);
   });
   collector.start();
   const refreshTimer = setInterval(() => {
     const next = engine.getContext(Date.now());
     if (!contextsEqual(currentContext, next)) {
       currentContext = next;
-      controller.onContextChanged(next);
+      void controller.onContextChanged(next);
     }
   }, 1_000);
 
@@ -105,7 +126,7 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
       engine.updateConfig(readEngineConfig());
       controller.updateSettings(readSessionSettings());
       currentContext = engine.getContext(Date.now());
-      controller.onContextChanged(currentContext);
+      void controller.onContextChanged(currentContext);
     }),
   );
 }
@@ -151,6 +172,8 @@ function readSessionSettings(): SessionSettings {
     adaptiveSwitching: configuration.get<boolean>("adaptiveSwitching", true),
     fadeDurationMs: configuration.get<number>("fadeDurationMs", 1_400),
     minimumAdaptiveConfidence: configuration.get<number>("minimumAdaptiveConfidence", 0.65),
+    completionCueCooldownMs: configuration.get<number>("completionCueCooldownSeconds", 20) * 1_000,
+    eventCueVolume: configuration.get<number>("eventCueVolume", 0.18),
   };
 }
 
@@ -168,12 +191,19 @@ function readEngineConfig(): ContextEngineConfig {
     editWindowMs: DEFAULT_CONTEXT_ENGINE_CONFIG.editWindowMs / factor,
     transitionDebounceMs: configuration.get<number>("transitionDebounceMs", 1_500) * factor,
     unfocusedIdleTimeoutMs: configuration.get<number>("unfocusedIdleSeconds", 30) * 1_000,
+    terminalAdaptation: readTerminalAdaptation(),
+    terminalMinimumDurationMs: configuration.get<number>("terminalMinimumDurationSeconds", 5) * 1_000,
   };
 }
 
 function readSensitivity(): ContextSensitivity {
   const value = vscode.workspace.getConfiguration(SECTION).get<string>("contextSensitivity", "balanced");
   return value === "calm" || value === "responsive" ? value : "balanced";
+}
+
+function readTerminalAdaptation(): TerminalAdaptation {
+  const value = vscode.workspace.getConfiguration(SECTION).get<string>("terminalAdaptation", "longRunningOnly");
+  return value === "off" || value === "all" ? value : "longRunningOnly";
 }
 
 function contextsEqual(left: CodingContext, right: CodingContext): boolean {
@@ -186,6 +216,7 @@ function contextsEqual(left: CodingContext, right: CodingContext): boolean {
     left.activeExecution === right.activeExecution &&
     left.diagnosticErrors === right.diagnosticErrors &&
     left.diagnosticWarnings === right.diagnosticWarnings &&
+    left.lastExecution?.id === right.lastExecution?.id &&
     left.reason === right.reason &&
     left.lastActivityAt === right.lastActivityAt
   );

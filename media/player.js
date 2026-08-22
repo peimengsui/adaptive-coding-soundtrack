@@ -17,6 +17,7 @@
   let currentScene;
   let currentTrack;
   let paused = false;
+  let pauseReason;
   let targetVolume = typeof persisted.volume === "number" ? persisted.volume : 0.45;
   let noiseBuffer;
   let impulseBuffer;
@@ -29,9 +30,11 @@
     const running = Boolean(audioContext && audioContext.state === "running");
     audioGate.classList.toggle("visible", !running);
     document.body.classList.toggle("playing", running && Boolean(currentTrack) && !paused);
-    status.textContent = running
-      ? "Audio is playing locally."
-      : "Playback is blocked. Click Enable Audio once to continue.";
+    if (!running) status.textContent = "Playback is blocked. Click Enable Audio once to continue.";
+    else if (paused && pauseReason === "idle") status.textContent = "Auto-paused after inactivity. Resume to keep playing.";
+    else if (paused) status.textContent = "Soundtrack paused.";
+    else if (currentTrack) status.textContent = "Audio is playing locally.";
+    else status.textContent = "Waiting for a soundtrack.";
     diagnostic(`AudioContext ${audioContext?.state ?? "not-created"}`);
   }
 
@@ -179,11 +182,16 @@
       startedAt: startAt,
       beat,
       barDuration: beat * 4,
+      morphGeneration: 0,
     };
 
     const schedule = () => {
       if (scene.stopped) return;
       while (scene.nextAt < context.currentTime + 1.2) {
+        const synth = scene.synth;
+        const beat = 60 / synth.tempoBpm;
+        scene.beat = beat;
+        scene.barDuration = beat * 4;
         const chord = synth.chordProgression[Math.floor(scene.step / 8) % synth.chordProgression.length];
         if (scene.step % 8 === 0) scheduleChord(scene, chord, scene.nextAt, beat * 3.85);
         if (synth.texture !== "air" && scene.step % 2 === 0) {
@@ -205,6 +213,29 @@
     schedule();
     scene.timer = setInterval(schedule, 180);
     return scene;
+  }
+
+  function morphScene(scene, track, fadeMs, at) {
+    const generation = ++scene.morphGeneration;
+    const delay = Math.max(0, (at - audioContext.currentTime) * 1_000);
+    setTimeout(() => {
+      if (scene.stopped || currentScene !== scene || scene.morphGeneration !== generation) return;
+      scene.track = track;
+      scene.synth = track.synthesis;
+      scene.random = seededRandom(track.synthesis.variationSeed ^ scene.step);
+      scene.beat = 60 / track.synthesis.tempoBpm;
+      scene.barDuration = scene.beat * 4;
+      scene.startedAt = at;
+      const seconds = Math.max(0.02, fadeMs / 1_000);
+      const dryTarget = 1 - track.synthesis.reverb * 0.35;
+      const wetTarget = track.synthesis.reverb * 0.45;
+      for (const [gain, target] of [[scene.dry.gain, dryTarget], [scene.wet.gain, wetTarget]]) {
+        gain.cancelScheduledValues(at);
+        gain.setValueAtTime(gain.value, at);
+        gain.linearRampToValueAtTime(target, at + seconds);
+      }
+      diagnostic(`Morphed to ${track.id} without restarting the sequence`);
+    }, delay);
   }
 
   function transitionBoundary(scene) {
@@ -236,24 +267,61 @@
     const previous = currentScene;
     const startAt = transitionBoundary(previous);
     currentTrack = track;
-    currentScene = createScene(track, fadeMs, startAt);
-    if (previous) stopScene(previous, fadeMs, startAt);
+    const canMorph = previous && previous.track.style === track.style;
+    if (canMorph) {
+      currentScene = previous;
+      morphScene(previous, track, fadeMs, startAt);
+    } else {
+      currentScene = createScene(track, fadeMs, startAt);
+      if (previous) stopScene(previous, fadeMs, startAt);
+    }
     const now = audioContext.currentTime;
     masterGain.gain.cancelScheduledValues(now);
     masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
     masterGain.gain.exponentialRampToValueAtTime(Math.max(targetVolume, 0.0001), now + Math.max(0.02, fadeMs / 1_000));
     paused = false;
+    pauseReason = undefined;
     title.textContent = track.title;
     artist.textContent = `${track.artist} · generated locally`;
     toggle.textContent = "Pause";
     vscode.setState({ volume: targetVolume, lastTrackId: track.id });
-    diagnostic(`Queued ${track.id} at audio time ${startAt.toFixed(2)}`);
+    diagnostic(`${canMorph ? "Morphing" : "Queued"} ${track.id} at audio time ${startAt.toFixed(2)}`);
     reflectAudioState();
   }
 
-  function setPaused(nextPaused, fadeMs) {
+  function scheduleCueNote(note, at, duration, peak, type) {
+    const oscillator = audioContext.createOscillator();
+    const filter = audioContext.createBiquadFilter();
+    const gain = audioContext.createGain();
+    oscillator.type = type;
+    oscillator.frequency.value = midiToHz(note);
+    filter.type = "lowpass";
+    filter.frequency.value = 3_200;
+    filter.Q.value = 0.4;
+    envelope(gain, at, peak, duration, 0.025);
+    oscillator.connect(filter).connect(gain).connect(masterInput);
+    oscillator.start(at);
+    oscillator.stop(at + duration + 0.1);
+  }
+
+  function playCue(cue, volume) {
+    if (!currentTrack || paused) return;
+    ensureAudio();
+    const root = currentTrack.synthesis.rootMidi;
+    const level = Math.max(0, Math.min(1, volume));
+    if (level === 0) return;
+    const notes = cue === "failure" ? [root + 12, root + 8, root + 5] : [root + 12, root + 16, root + 19];
+    const now = audioContext.currentTime + 0.04;
+    notes.forEach((note, index) => {
+      scheduleCueNote(note, now + index * 0.12, 0.42, Math.max(0.0001, level * 0.22), cue === "failure" ? "triangle" : "sine");
+    });
+    diagnostic(`Played ${cue} cue`);
+  }
+
+  function setPaused(nextPaused, fadeMs, reason) {
     paused = nextPaused;
-    toggle.textContent = paused ? "Resume" : "Pause";
+    pauseReason = paused ? reason ?? "user" : undefined;
+    toggle.textContent = paused ? (pauseReason === "idle" ? "Resume Anyway" : "Resume") : "Pause";
     if (!audioContext || !masterGain) {
       reflectAudioState();
       return;
@@ -269,12 +337,16 @@
   window.addEventListener("message", (event) => {
     const message = event.data;
     if (message.type === "play") play(message.track, message.fadeDurationMs);
-    if (message.type === "pause") setPaused(true, message.fadeDurationMs);
+    if (message.type === "pause") setPaused(true, message.fadeDurationMs, message.reason);
     if (message.type === "resume") { ensureAudio(); setPaused(false, message.fadeDurationMs); }
+    if (message.type === "cue") playCue(message.cue, message.volume);
     if (message.type === "stop") {
       stopScene(currentScene, message.fadeDurationMs);
       currentScene = undefined;
       currentTrack = undefined;
+      paused = false;
+      pauseReason = undefined;
+      toggle.textContent = "Pause";
       document.body.classList.remove("playing");
       title.textContent = "Session stopped";
       status.textContent = "Start another session from the Command Palette.";

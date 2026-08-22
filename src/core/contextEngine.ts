@@ -4,7 +4,9 @@ import {
   CodingContext,
   CodingState,
   ExecutionOutcome,
+  ExecutionSummary,
   ExecutionSource,
+  TerminalAdaptation,
   clamp,
   roundToHundredth,
 } from "./types";
@@ -21,6 +23,8 @@ export interface ContextEngineConfig {
   reviewingAfterEditMs: number;
   transitionDebounceMs: number;
   unfocusedIdleTimeoutMs: number;
+  terminalAdaptation: TerminalAdaptation;
+  terminalMinimumDurationMs: number;
 }
 
 export const DEFAULT_CONTEXT_ENGINE_CONFIG: Readonly<ContextEngineConfig> = {
@@ -35,6 +39,8 @@ export const DEFAULT_CONTEXT_ENGINE_CONFIG: Readonly<ContextEngineConfig> = {
   reviewingAfterEditMs: 4_000,
   transitionDebounceMs: 1_500,
   unfocusedIdleTimeoutMs: 30_000,
+  terminalAdaptation: "longRunningOnly",
+  terminalMinimumDurationMs: 5_000,
 };
 
 interface ExecutionState {
@@ -57,6 +63,8 @@ export class ContextEngine {
   private executionCompletedAt?: number;
   private executionSource?: ExecutionSource;
   private executionOutcome?: ExecutionOutcome;
+  private lastExecution?: ExecutionSummary;
+  private executionSequence = 0;
   private readonly executions: ExecutionState = { tasks: 0, terminalCommands: 0, debugSessions: 0 };
   private diagnosticErrors = 0;
   private diagnosticWarnings = 0;
@@ -72,9 +80,20 @@ export class ContextEngine {
     this.config = { ...config };
   }
 
-  public updateConfig(config: ContextEngineConfig): void { this.config = { ...config }; }
+  public updateConfig(config: ContextEngineConfig): void {
+    this.config = { ...config };
+    if (config.terminalAdaptation === "off" && this.executions.terminalCommands > 0) {
+      this.executions.terminalCommands = 0;
+      if (this.activeExecutionCount() === 0) this.executionStartedAt = undefined;
+    }
+  }
 
   public record(event: ActivityEvent): CodingContext {
+    if (
+      this.config.terminalAdaptation === "off" &&
+      (event.kind === "terminal_command_started" || event.kind === "terminal_command_completed")
+    ) return this.getContext(event.at);
+
     this.hasActivity = true;
     if (!NON_USER_ACTIVITY.has(event.kind)) {
       this.lastActivityAt = Math.max(this.lastActivityAt, event.at);
@@ -102,10 +121,12 @@ export class ContextEngine {
         this.finishExecution("task", event.at, event.outcome);
         break;
       case "terminal_command_started":
-        this.startExecution("terminal", event.at);
+        if (this.config.terminalAdaptation !== "off") this.startExecution("terminal", event.at);
         break;
       case "terminal_command_completed":
-        this.finishExecution("terminal", event.at, event.outcome);
+        if (this.config.terminalAdaptation !== "off") {
+          this.finishExecution("terminal", event.at, event.outcome, event.durationMs);
+        }
         break;
       case "debug_started":
         this.startExecution("debug", event.at);
@@ -164,6 +185,7 @@ export class ContextEngine {
       activeExecution: this.activeExecutionCount() > 0,
       diagnosticErrors: this.diagnosticErrors,
       diagnosticWarnings: this.diagnosticWarnings,
+      lastExecution: this.lastExecution,
       reason: this.explainState(state, now),
       lastActivityAt: this.lastActivityAt,
     };
@@ -172,6 +194,7 @@ export class ContextEngine {
   private inferCandidateState(now: number): CodingState {
     if (
       this.executionCompletedAt !== undefined &&
+      this.executionSource !== "terminal" &&
       this.executionOutcome !== "failure" &&
       now - this.executionCompletedAt < this.config.completionHoldMs
     ) return "completed";
@@ -241,10 +264,24 @@ export class ContextEngine {
     this.executionOutcome = undefined;
   }
 
-  private finishExecution(source: ExecutionSource, at: number, outcome: ExecutionOutcome = "unknown"): void {
+  private finishExecution(
+    source: ExecutionSource,
+    at: number,
+    outcome: ExecutionOutcome = "unknown",
+    durationMs?: number,
+  ): void {
     if (source === "task") this.executions.tasks = Math.max(0, this.executions.tasks - 1);
     else if (source === "terminal") this.executions.terminalCommands = Math.max(0, this.executions.terminalCommands - 1);
     else this.executions.debugSessions = Math.max(0, this.executions.debugSessions - 1);
+
+    this.lastExecution = {
+      id: ++this.executionSequence,
+      source,
+      outcome,
+      completedAt: at,
+      durationMs,
+      cue: this.executionCue(source, outcome, durationMs),
+    };
 
     if (this.activeExecutionCount() === 0) {
       this.executionStartedAt = undefined;
@@ -252,6 +289,19 @@ export class ContextEngine {
       this.executionSource = source;
       this.executionOutcome = outcome;
     }
+  }
+
+  private executionCue(
+    source: ExecutionSource,
+    outcome: ExecutionOutcome,
+    durationMs: number | undefined,
+  ): ExecutionSummary["cue"] {
+    if (source !== "terminal" || outcome === "unknown" || this.config.terminalAdaptation === "off") return undefined;
+    const eligible =
+      this.config.terminalAdaptation === "all" ||
+      (durationMs !== undefined && durationMs >= this.config.terminalMinimumDurationMs);
+    if (!eligible) return undefined;
+    return outcome === "failure" ? "failure" : "completion";
   }
 
   private activeExecutionCount(): number {

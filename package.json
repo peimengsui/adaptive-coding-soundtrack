@@ -2,7 +2,7 @@
   "name": "adaptive-coding-soundtrack",
   "displayName": "Adaptive Coding Soundtrack",
   "description": "Local-first music that adapts to your coding flow.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "adaptive-soundtrack",
   "repository": {
     "type": "git",
@@ -170,6 +170,42 @@
           "maximum": 300,
           "default": 8,
           "description": "Editing pause during a running task before Waiting."
+        },
+        "adaptiveMusic.terminalAdaptation": {
+          "type": "string",
+          "enum": [
+            "off",
+            "longRunningOnly",
+            "all"
+          ],
+          "enumDescriptions": [
+            "Ignore terminal execution lifecycle",
+            "Adapt while commands run, but cue only long-running completions",
+            "Adapt and cue every terminal completion with a known outcome"
+          ],
+          "default": "longRunningOnly",
+          "description": "How shell-integrated terminal executions affect the soundtrack. Command text and output are never read."
+        },
+        "adaptiveMusic.terminalMinimumDurationSeconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 5,
+          "description": "Minimum terminal execution duration for a completion or failure cue in long-running-only mode."
+        },
+        "adaptiveMusic.completionCueCooldownSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 300,
+          "default": 20,
+          "description": "Minimum time between terminal completion or failure cues."
+        },
+        "adaptiveMusic.eventCueVolume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.18,
+          "description": "Relative volume of terminal completion and failure cues."
         },
         "adaptiveMusic.deepFocusSeconds": {
           "type": "number",
