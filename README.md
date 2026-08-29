@@ -1,10 +1,10 @@
 # Adaptive Coding Soundtrack
 
-Adaptive Coding Soundtrack is a local-first VS Code and Cursor extension that changes original procedural music as your coding flow changes.
+Adaptive Coding Soundtrack is a local-first VS Code and Cursor extension that changes music as your coding flow changes. Version 0.3.0 adds optional, explicitly confirmed bring-your-own-key generation through ElevenLabs Music, Google Lyria, and Stability AI while keeping the free procedural engine as the default and automatic fallback.
 
 Start a session, choose **Ambient**, **Jazz**, or **Lo-fi**, and code normally. The status bar reports the inferred state—for example, `♫ Jazz · Deep Focus`—while a small Webview synthesizes the soundtrack locally with Web Audio.
 
-No music catalog, account, API key, or network connection is required.
+No account, API key, or network connection is required for the default local mode.
 
 ## Features
 
@@ -19,7 +19,13 @@ No music catalog, account, API key, or network connection is required.
 - Persistent same-style sequences with in-place morphing, plus beat-aligned style crossfades
 - Schedule-ahead timing, stereo placement, compression, filtering, and reverb
 - Commands for playback, style, volume, calibration, state explanation, and diagnostics
-- No runtime npm dependencies, external requests, or bundled recordings
+- Opt-in ElevenLabs Music v2, Google Lyria 3 Pro Preview, and Stable Audio 3 adapters
+- API keys stored only in VS Code Secret Storage, never settings or logs
+- Detailed style prompts, preview-before-generation, cancellation, timeouts, a one-attempt default daily ceiling, local fallback, and provider provenance
+- Paid generation only after explicit confirmation; selecting a provider or encountering a cache miss never spends credits
+- One cached AI track per provider/model/style/duration, with local adaptation across ordinary context changes
+- A 250 MB least-recently-used MP3 cache with inspection and per-track deletion
+- No runtime npm dependencies or bundled recordings
 
 ## Architecture
 
@@ -36,14 +42,14 @@ MusicDirector           musical intent, independent of playback
         ↓
 MusicRequest
         ↓
-MusicProvider           MVP: LocalProceduralMusicProvider
+AdaptiveMusicProvider   local default or one opt-in remote adapter
         ↓
-Track                    procedural synthesis recipe
+Track                    procedural recipe or cached generated MP3
         ↓
 WebviewAudioPlayer       local Web Audio scheduling and mixing
 ```
 
-`MusicSessionController` applies confidence gating, coordinates playback, updates the status bar, and writes content-free lifecycle information to the **Adaptive Music** output channel. The core engine, director, and provider import no VS Code APIs.
+`MusicSessionController` applies confidence gating, coordinates playback, updates the status bar, and writes content-free lifecycle information to the **Adaptive Music** output channel. The core engine and director import no VS Code APIs. Remote adapters receive only musical controls derived from `MusicRequest`.
 
 ## Context inference
 
@@ -72,6 +78,30 @@ When coding context changes within the selected style, the existing sequence kee
 
 Web Audio is part of the editor's embedded Chromium runtime. It has no usage fee. The extension includes no third-party recordings.
 
+For a remote source, normal playback is cache-only. A paid request occurs only after the user invokes **Generate and Cache Current Style** and accepts its modal confirmation. The resulting instrumental MP3 is stored once per provider/model/style/duration under the extension's private global-storage directory. Energy and brightness changes are applied locally with Web Audio filters and gain, so Flow, Focus, Waiting, Review, and completion cues reuse the same style asset. Cursor receives the cached bytes through a Webview-scoped Blob; the player never receives the API key or raw filesystem path.
+
+## Optional AI providers
+
+You do **not** need accounts for all three providers. The local engine and automated tests need none. For live acceptance testing, create an account and key for only the provider you want to exercise; testing every adapter end-to-end requires three separate accounts because the services do not share credentials.
+
+| Provider | Implemented model/API | Live-test requirement |
+|---|---|---|
+| ElevenLabs | Music v2 streaming | ElevenLabs account with paid Music API access and an [API key](https://elevenlabs.io/app/settings/api-keys) |
+| Google | Lyria 3 Pro Preview through the Gemini API | Google AI Studio key from a project with paid-tier Lyria access; create a key in [AI Studio](https://aistudio.google.com/apikey) |
+| Stability AI | Stable Audio 3 | Stability account, [API key](https://platform.stability.ai/account/keys), and enough credits for a generation |
+
+To configure one:
+
+1. Run **Adaptive Music: Choose Music Source**.
+2. Select a remote provider.
+3. Choose **Add API Key**, or run **Adaptive Music: Configure AI Provider**.
+4. Run **Adaptive Music: Test Provider Connection**. This validates access without generating music.
+5. Start a session. A cache miss plays clearly labeled local procedural audio and makes no paid request.
+6. Optionally run **Adaptive Music: Preview Generation Prompt**.
+7. Run **Adaptive Music: Generate and Cache Current Style** and confirm the provider-credit warning. Later context changes reuse that style's cached MP3.
+
+Keys are password-masked and stored through VS Code Secret Storage. Do not paste a key into source, settings JSON, an issue, or the Adaptive Music output channel. Use **Adaptive Music: Remove Provider API Key** to delete one.
+
 ## Install a packaged build
 
 Build the VSIX:
@@ -81,12 +111,12 @@ npm ci
 npm run verify
 ```
 
-Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.2.1.vsix`.
+Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.3.0.vsix`.
 
 VS Code CLI alternative:
 
 ```bash
-code --install-extension adaptive-coding-soundtrack-0.2.1.vsix
+code --install-extension adaptive-coding-soundtrack-0.3.0.vsix
 ```
 
 ## Run from source
@@ -134,12 +164,26 @@ For a faster demo:
 | Adaptive Music: Show Current State | Explain current state, confidence, signals, and diagnostics |
 | Adaptive Music: Show Diagnostics | Open the privacy-safe output channel |
 | Adaptive Music: Show Player | Reveal the player Webview |
+| Adaptive Music: Choose Music Source | Select local audio or one remote provider |
+| Adaptive Music: Configure AI Provider | Save a provider key in Secret Storage |
+| Adaptive Music: Test Provider Connection | Validate key and model access without generating a track |
+| Adaptive Music: Remove Provider API Key | Delete one saved key |
+| Adaptive Music: Generate and Cache Current Style | Explicitly confirm one paid generation and cache or replace the selected style |
+| Adaptive Music: Preview Generation Prompt | Inspect the exact musical prompt before sending anything |
+| Adaptive Music: Show Generated Music Cache | Inspect cached provider/style assets and optionally delete one |
+| Adaptive Music: Clear Generated Music Cache | Stop playback and delete cached generated MP3 files |
 
 ## Settings
 
 | Setting | Default | Purpose |
 |---|---:|---|
 | `adaptiveMusic.defaultStyle` | `ambient` | Ambient, Jazz, or Lo-fi |
+| `adaptiveMusic.musicSource` | `local` | Local, ElevenLabs, Google Lyria, or Stability AI |
+| `adaptiveMusic.generatedTrackDurationSeconds` | `30` | Duration of an explicitly confirmed generated track |
+| `adaptiveMusic.generatedCacheSizeMb` | `250` | LRU cache ceiling |
+| `adaptiveMusic.remoteRequestTimeoutSeconds` | `300` | Timeout for an explicitly confirmed generation |
+| `adaptiveMusic.remoteDailyGenerationLimit` | `1` | Explicit attempts per provider per UTC day; failed attempts count; 0 disables the ceiling |
+| `adaptiveMusic.customPromptSuffix` | empty | Optional user-written musical direction appended to generation prompts |
 | `adaptiveMusic.volume` | `0.45` | Playback gain from 0–1 |
 | `adaptiveMusic.adaptiveSwitching` | `true` | Enable context-driven changes |
 | `adaptiveMusic.contextSensitivity` | `balanced` | Globally tune reaction speed and edit requirements |
@@ -161,7 +205,7 @@ For a faster demo:
 ```bash
 npm run compile           # TypeScript build
 npm run lint              # strict type-check + player JavaScript syntax
-npm test                  # 20 deterministic core tests
+npm test                  # deterministic core, cache, prompt, and adapter tests
 npm run test:integration  # real Extension Host activation/Webview tests
 npm run package           # build the VSIX
 npm run check:package     # validate required/prohibited VSIX contents and size
@@ -175,8 +219,9 @@ GitHub Actions workflows provide pull-request verification, a validated VSIX art
 ## Project structure
 
 ```text
-src/core/          context inference, music direction, provider, contracts
-src/vscode/        activity adapter, controller, Webview host
+src/core/          context inference, music direction, local provider, contracts
+src/providers/     remote clients, orchestration, private MP3 cache, prompt builder
+src/vscode/        activity adapter, credentials, controller, Webview host
 src/test/          deterministic core tests
 src/integration/   Extension Host tests
 media/             player JavaScript/CSS and extension icon
@@ -192,20 +237,22 @@ To add a local style, define its profile in `src/core/localProceduralMusicProvid
 To add another provider, implement:
 
 ```ts
-interface MusicProvider {
-  getTrack(request: MusicRequest): Promise<Track>;
+interface RemoteMusicClient {
+  generate(request, apiKey, signal): Promise<RemoteGenerationResult>;
+  testConnection(apiKey, signal): Promise<string>;
 }
 ```
 
-Inject it where `LocalProceduralMusicProvider` is constructed. Remote providers must handle cancellation, caching, offline fallback, quotas, attribution, provenance, and errors without changing the Context Engine or Music Director.
+Register it with `AdaptiveMusicProvider` and add the source to the manifest. The shared orchestrator handles explicit confirmation, cancellation, content-free automatic prompting, caching, generation limits, attribution, and local fallback without changing the Context Engine or Music Director.
 
 ## Privacy and security
 
-The extension records no source content and makes no network requests. Detailed policies ship as `PRIVACY.md` and `SECURITY.md`.
+The extension records no source content. Selecting a remote provider makes no network request. Network access occurs only when the user explicitly tests a connection or confirms a paid generation. Detailed policies ship as `PRIVACY.md` and `SECURITY.md`.
 
 - No source text, filenames, prompts, diagnostic messages, terminal commands, or terminal output
 - No telemetry
-- No credentials
+- Remote keys live in VS Code Secret Storage and are sent only to the selected provider
+- Automatically constructed remote prompts contain musical controls only. An optional custom suffix is sent verbatim after a previewable privacy warning.
 - No runtime npm dependencies
 - No execution of workspace commands by the extension
 
@@ -216,12 +263,18 @@ The extension records no source content and makes no network requests. Detailed 
 - Standard VS Code APIs do not expose other extensions' complete test-result lifecycle, so configured test tasks are observed as tasks.
 - Debug termination does not expose success/failure and is treated as a neutral successful Completed state.
 - Chromium may require one **Enable Audio** click per new player Webview.
+- Each provider/model/style/duration has one cached AI asset; an uncached style plays clearly labeled procedural audio until the user explicitly generates it.
 - A session is not automatically restarted after an editor reload.
 - Cursor Agent internal state is unavailable through standard APIs.
+- Remote APIs can change, incur provider charges, enforce regional/model access, or reject a key. Local fallback remains available.
+- Google Lyria 3 Pro is a preview API and may change before general availability.
 
-## Future AI Music Integration (0.3.x)
+## Future roadmap
 
-Future opt-in bring-your-own-token providers could translate `MusicRequest` into prompts or controls for services such as Google Lyria, ElevenLabs Music, or Stable Audio. They should use VS Code SecretStorage, send only an explicit content-free musical request, cache generated tracks, display provider cost and provenance, offer the local provider as an offline fallback, and isolate each provider behind a small adapter.
+- Evaluate the official Suno API once its detailed documentation, pricing, licensing, and availability are mature enough for a stable adapter.
+- Add provider-specific cost estimates without sending telemetry.
+- Explore longer-lived or streaming generation only where it can preserve musical continuity and bounded cost.
+- Add Cursor-specific context only when a supported public API exists.
 
 ## License
 

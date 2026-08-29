@@ -4,6 +4,10 @@ export type CodingState = (typeof CODING_STATES)[number];
 export const MUSIC_STYLES = ["ambient", "jazz", "lofi"] as const;
 export type MusicStyle = (typeof MUSIC_STYLES)[number];
 
+export const MUSIC_SOURCES = ["local", "elevenlabs", "google-lyria", "stability"] as const;
+export type MusicSource = (typeof MUSIC_SOURCES)[number];
+export type RemoteProviderId = Exclude<MusicSource, "local">;
+
 export interface CodingContext {
   state: CodingState;
   intensity: number;
@@ -91,16 +95,55 @@ export interface ProceduralSynthesis {
   variationSeed: number;
 }
 
-export interface Track {
+interface BaseTrack {
   id: string;
   title: string;
   artist: string;
   style: MusicStyle;
-  source: "procedural";
-  synthesis: ProceduralSynthesis;
 }
 
-export interface MusicProvider { getTrack(request: MusicRequest): Promise<Track>; }
+export interface ProceduralTrack extends BaseTrack {
+  source: "procedural";
+  synthesis: ProceduralSynthesis;
+  remoteFallback?: RemoteFallback;
+}
+
+export type RemoteFallbackReason = "no_cache" | "cache_error";
+
+export interface RemoteFallback {
+  provider: RemoteProviderId;
+  providerLabel: string;
+  reason: RemoteFallbackReason;
+  message: string;
+}
+
+export interface GeneratedTrackAdaptation {
+  energy: number;
+  brightness: number;
+  tempoBpm: number;
+  rootMidi: number;
+}
+
+export interface GeneratedAudioTrack extends BaseTrack {
+  source: "generated";
+  provider: RemoteProviderId;
+  providerLabel: string;
+  model: string;
+  assetId: string;
+  audioFilePath: string;
+  mimeType: "audio/mpeg";
+  durationSeconds: number;
+  cacheHit: boolean;
+  generatedAt: number;
+  adaptation: GeneratedTrackAdaptation;
+}
+
+export type Track = ProceduralTrack | GeneratedAudioTrack;
+
+export interface MusicProvider {
+  getTrack(request: MusicRequest, signal?: AbortSignal): Promise<Track>;
+  generateTrack?(request: MusicRequest, signal?: AbortSignal): Promise<GeneratedAudioTrack>;
+}
 
 export function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.min(maximum, Math.max(minimum, value));

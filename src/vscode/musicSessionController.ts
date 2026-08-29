@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { isExecutionCueAllowed } from "../core/cuePolicy";
 import { MusicDirector } from "../core/musicDirector";
-import { CodingContext, MusicProvider, MusicRequest, MusicStyle, PlaybackCue, Track } from "../core/types";
+import { CodingContext, GeneratedAudioTrack, MusicProvider, MusicRequest, MusicStyle, PlaybackCue, Track } from "../core/types";
 import { WebviewAudioPlayer } from "./webviewAudioPlayer";
 
 export interface SessionSettings {
@@ -27,6 +27,9 @@ export class MusicSessionController implements vscode.Disposable {
   private lastHandledExecutionId?: number;
   private lastCueAt?: number;
   private generation = 0;
+  private generationAbort?: AbortController;
+  private requestPending = false;
+  private explicitGenerationPending = false;
 
   public constructor(
     private readonly director: MusicDirector,
@@ -50,6 +53,10 @@ export class MusicSessionController implements vscode.Disposable {
     this.currentRequestSignature = undefined;
     this.lastHandledExecutionId = this.context.lastExecution?.id;
     this.lastCueAt = undefined;
+    this.generationAbort?.abort();
+    this.generationAbort = undefined;
+    this.requestPending = false;
+    this.explicitGenerationPending = false;
     this.generation += 1;
     this.player.reveal();
     this.output.appendLine(`[session] Started with ${STYLE_LABELS[style]}`);
@@ -60,6 +67,10 @@ export class MusicSessionController implements vscode.Disposable {
   public stop(): void {
     if (!this.active) return;
     this.active = false;
+    this.generationAbort?.abort();
+    this.generationAbort = undefined;
+    this.requestPending = false;
+    this.explicitGenerationPending = false;
     this.generation += 1;
     this.currentRequestSignature = undefined;
     this.currentTrack = undefined;
@@ -82,6 +93,11 @@ export class MusicSessionController implements vscode.Disposable {
     if (shouldPause) {
       this.userPaused = true;
       this.idlePlaybackOverride = false;
+      this.generationAbort?.abort();
+      this.generationAbort = undefined;
+      this.requestPending = false;
+      this.explicitGenerationPending = false;
+      this.generation += 1;
       this.player.pause("user");
     } else {
       this.userPaused = false;
@@ -94,6 +110,8 @@ export class MusicSessionController implements vscode.Disposable {
   }
 
   public async setStyle(style: MusicStyle): Promise<void> {
+    this.generationAbort?.abort();
+    this.explicitGenerationPending = false;
     this.style = style;
     this.currentRequestSignature = undefined;
     this.updateStatus();
@@ -104,6 +122,52 @@ export class MusicSessionController implements vscode.Disposable {
     this.settings.volume = Math.min(1, Math.max(0, volume));
     this.player.setVolume(this.settings.volume);
     this.updateStatus();
+  }
+
+  public async refreshTrack(): Promise<void> {
+    this.generationAbort?.abort();
+    this.explicitGenerationPending = false;
+    this.currentRequestSignature = undefined;
+    if (this.active) await this.adapt(true);
+  }
+
+  public getCurrentRequest(): MusicRequest {
+    return this.director.createRequest(this.context, { style: this.style });
+  }
+
+  public async generateCurrentTrack(externalSignal?: AbortSignal): Promise<GeneratedAudioTrack> {
+    if (!this.active) throw new Error("Start an Adaptive Music session before generating a track.");
+    if (!this.provider.generateTrack) throw new Error("The selected soundtrack provider does not support remote generation.");
+    this.generationAbort?.abort();
+    const abort = new AbortController();
+    const forwardAbort = () => abort.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) forwardAbort();
+    else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+    this.generationAbort = abort;
+    const requestGeneration = ++this.generation;
+    const request = this.getCurrentRequest();
+    this.requestPending = true;
+    this.explicitGenerationPending = true;
+    try {
+      const track = await this.provider.generateTrack(request, abort.signal);
+      if (!this.active || abort.signal.aborted || requestGeneration !== this.generation) {
+        throw abortError();
+      }
+      this.currentTrack = track;
+      this.currentRequestSignature = this.requestSignature(request, true);
+      this.contextPaused = false;
+      this.player.play(track, this.settings.volume, this.settings.fadeDurationMs);
+      this.output.appendLine(`[director] Playing ${track.id} via ${track.providerLabel}`);
+      this.updateStatus();
+      return track;
+    } finally {
+      externalSignal?.removeEventListener("abort", forwardAbort);
+      if (requestGeneration === this.generation) {
+        this.requestPending = false;
+        this.explicitGenerationPending = false;
+        if (this.generationAbort === abort) this.generationAbort = undefined;
+      }
+    }
   }
 
   public updateSettings(settings: SessionSettings): void {
@@ -125,7 +189,7 @@ export class MusicSessionController implements vscode.Disposable {
     if (context.state !== "idle") this.idlePlaybackOverride = false;
     this.handleExecutionCue(context);
     this.updateStatus();
-    if (this.active && (this.settings.adaptiveSwitching || !this.currentTrack)) await this.adapt(stateChanged);
+    if (this.active && !this.explicitGenerationPending && (this.settings.adaptiveSwitching || !this.currentTrack)) await this.adapt(stateChanged);
   }
 
   public showPlayer(): void {
@@ -144,6 +208,10 @@ export class MusicSessionController implements vscode.Disposable {
 
   public dispose(): void {
     this.active = false;
+    this.generationAbort?.abort();
+    this.generationAbort = undefined;
+    this.requestPending = false;
+    this.explicitGenerationPending = false;
     this.generation += 1;
     this.player.dispose();
     this.statusBar.dispose();
@@ -154,6 +222,10 @@ export class MusicSessionController implements vscode.Disposable {
     const request = this.director.createRequest(this.context, { style: this.style });
     const idleOverride = this.context.state === "idle" && this.idlePlaybackOverride;
     if (!request.shouldPlay && !idleOverride) {
+      this.generationAbort?.abort();
+      this.generationAbort = undefined;
+      this.requestPending = false;
+      this.generation += 1;
       this.contextPaused = true;
       this.currentRequestSignature = undefined;
       this.player.pause("idle");
@@ -171,20 +243,53 @@ export class MusicSessionController implements vscode.Disposable {
       );
       return;
     }
-    const signature = this.requestSignature(request);
-    if (!force && signature === this.currentRequestSignature) return;
+    const signature = this.requestSignature(request, force);
+    if (!force && signature === this.currentRequestSignature) {
+      if (this.currentTrack?.source === "generated") {
+        this.currentTrack = {
+          ...this.currentTrack,
+          adaptation: {
+            ...this.currentTrack.adaptation,
+            energy: request.energy,
+            brightness: request.brightness,
+            tempoBpm: request.tempoBpm,
+          },
+        };
+        this.player.play(this.currentTrack, this.settings.volume, this.settings.fadeDurationMs);
+      }
+      return;
+    }
+    this.generationAbort?.abort();
+    const abort = new AbortController();
+    this.generationAbort = abort;
     const requestGeneration = ++this.generation;
-    const track = await this.provider.getTrack(request);
+    this.currentRequestSignature = signature;
+    this.requestPending = true;
+    let track: Track;
+    try {
+      track = await this.provider.getTrack(request, abort.signal);
+    } catch (error) {
+      if (abort.signal.aborted) return;
+      this.requestPending = false;
+      if (requestGeneration === this.generation) this.currentRequestSignature = undefined;
+      this.output.appendLine(`[director] Track request failed: ${safeErrorMessage(error)}`);
+      return;
+    }
+    if (requestGeneration === this.generation) {
+      this.requestPending = false;
+      if (this.generationAbort === abort) this.generationAbort = undefined;
+    }
     if (!this.active || this.userPaused || requestGeneration !== this.generation) return;
     this.contextPaused = false;
     this.currentTrack = track;
     this.currentRequestSignature = signature;
     this.player.play(track, this.settings.volume, this.settings.fadeDurationMs);
-    this.output.appendLine(`[director] Playing ${track.id}`);
+    this.output.appendLine(`[director] Playing ${track.id}${track.source === "generated" ? ` via ${track.providerLabel}${track.cacheHit ? " (cache)" : ""}` : " locally"}`);
     this.updateStatus();
   }
 
-  private requestSignature(request: MusicRequest): string {
+  private requestSignature(request: MusicRequest, broad = false): string {
+    if (broad || this.requestPending || !this.currentTrack || this.currentTrack.source === "generated") return `${request.style}:${request.intent}`;
     const band = request.energy < 0.4 ? "low" : request.energy < 0.7 ? "mid" : "high";
     return `${request.style}:${request.intent}:${band}`;
   }
@@ -209,11 +314,24 @@ export class MusicSessionController implements vscode.Disposable {
   private updateStatus(): void {
     if (!this.active) { this.statusBar.hide(); return; }
     const pausedSuffix = this.userPaused ? " · Paused" : this.contextPaused ? " · Auto-paused" : "";
-    this.statusBar.text = `♫ ${STYLE_LABELS[this.style]} · ${STATE_LABELS[this.context.state]}${pausedSuffix}`;
+    const sourceSuffix = this.currentTrack?.source === "generated"
+      ? ` · ${this.currentTrack.providerLabel}`
+      : this.currentTrack?.remoteFallback
+        ? ` · ${this.currentTrack.remoteFallback.providerLabel} fallback`
+        : "";
+    this.statusBar.text = `♫ ${STYLE_LABELS[this.style]} · ${STATE_LABELS[this.context.state]}${sourceSuffix}${pausedSuffix}`;
     this.statusBar.tooltip = new vscode.MarkdownString([
       "**Adaptive Coding Soundtrack**", "", `State: ${STATE_LABELS[this.context.state]}`,
       `Intensity: ${Math.round(this.context.intensity * 100)}%`, `Confidence: ${Math.round(this.context.confidence * 100)}%`,
       `Reason: ${this.context.reason}`,
+      this.currentTrack?.source === "generated"
+        ? `Source: ${this.currentTrack.providerLabel}${this.currentTrack.cacheHit ? " (cache)" : ""}`
+        : this.currentTrack?.remoteFallback
+          ? `Source: Local procedural fallback (${this.currentTrack.remoteFallback.providerLabel} selected)`
+          : "Source: Local procedural audio",
+      this.currentTrack?.source === "procedural" && this.currentTrack.remoteFallback
+        ? `Fallback: ${this.currentTrack.remoteFallback.message}`
+        : "",
       this.context.activeLanguage ? `Language: ${this.context.activeLanguage}` : "",
       this.context.activeExecution ? "Execution running" : "",
       this.context.diagnosticErrors > 0 ? `Diagnostic errors: ${this.context.diagnosticErrors}` : "",
@@ -226,3 +344,13 @@ export class MusicSessionController implements vscode.Disposable {
 export function styleLabel(style: MusicStyle): string { return STYLE_LABELS[style]; }
 export function stateLabel(state: CodingContext["state"]): string { return STATE_LABELS[state]; }
 function cueLabel(cue: PlaybackCue): string { return cue === "failure" ? "failure" : "completion"; }
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.name === "AbortError" ? "cancelled" : error.message;
+  return "Unknown provider error";
+}
+
+function abortError(): Error {
+  const error = new Error("cancelled");
+  error.name = "AbortError";
+  return error;
+}

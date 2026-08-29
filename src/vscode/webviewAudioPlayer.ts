@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { PlaybackCue, Track } from "../core/types";
 
-export type PlayerControl = "pause" | "resume" | "stop" | "setVolume";
+export type PlayerControl = "pause" | "resume" | "stop" | "generate" | "setVolume";
 export type PlayerControlHandler = (control: PlayerControl, value?: number) => void;
 export type PlayerPauseReason = "user" | "idle";
 
@@ -18,6 +18,9 @@ export class WebviewAudioPlayer implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
   private ready = false;
   private disposing = false;
+  private sendGeneration = 0;
+  private lastSentGeneratedAssetId?: string;
+  private audioPayload?: { assetId: string; filePath: string; base64: Promise<string> };
   private pendingCue?: { cue: PlaybackCue; volume: number };
   private readonly desired: DesiredPlayback = {
     paused: false,
@@ -48,12 +51,15 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     );
     this.panel = panel;
     this.ready = false;
+    this.lastSentGeneratedAssetId = undefined;
     panel.iconPath = new vscode.ThemeIcon("unmute");
     panel.webview.html = this.getHtml(panel.webview);
     panel.webview.onDidReceiveMessage((message: unknown) => this.handleMessage(message));
     panel.onDidDispose(() => {
       this.panel = undefined;
       this.ready = false;
+      this.sendGeneration += 1;
+      this.lastSentGeneratedAssetId = undefined;
       if (!this.disposing) this.onControl("stop");
     });
   }
@@ -65,7 +71,7 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     this.desired.volume = volume;
     this.desired.fadeDurationMs = fadeDurationMs;
     this.reveal();
-    this.sendDesiredPlayback();
+    void this.sendDesiredPlayback();
   }
 
   public pause(reason: PlayerPauseReason = "user"): void {
@@ -85,6 +91,8 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     this.desired.paused = false;
     this.desired.pauseReason = undefined;
     this.pendingCue = undefined;
+    this.sendGeneration += 1;
+    this.lastSentGeneratedAssetId = undefined;
     this.post({ type: "stop", fadeDurationMs: this.desired.fadeDurationMs });
   }
 
@@ -108,14 +116,35 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     this.panel?.dispose();
     this.panel = undefined;
     this.ready = false;
+    this.sendGeneration += 1;
+    this.lastSentGeneratedAssetId = undefined;
+    this.audioPayload = undefined;
     this.disposing = false;
   }
 
-  private sendDesiredPlayback(): void {
-    if (!this.ready) return;
+  private async sendDesiredPlayback(): Promise<void> {
+    if (!this.ready || !this.panel) return;
+    const sendGeneration = ++this.sendGeneration;
+    const track = this.desired.track;
+    const webview = this.panel.webview;
     this.post({ type: "volume", volume: this.desired.volume });
-    if (this.desired.track) {
-      this.post({ type: "play", track: this.desired.track, fadeDurationMs: this.desired.fadeDurationMs });
+    if (track) {
+      let playerTrack: object;
+      try {
+        const includeAudio = track.source === "generated" && track.assetId !== this.lastSentGeneratedAssetId;
+        playerTrack = await this.playerTrack(track, includeAudio);
+      } catch (error) {
+        this.onDiagnostic(`Unable to read cached generated audio: ${safeErrorMessage(error)}`);
+        return;
+      }
+      if (sendGeneration !== this.sendGeneration || !this.ready || this.panel?.webview !== webview) return;
+      const delivered = await webview.postMessage({
+        type: "play",
+        track: playerTrack,
+        fadeDurationMs: this.desired.fadeDurationMs,
+      });
+      if (!delivered || sendGeneration !== this.sendGeneration) return;
+      this.lastSentGeneratedAssetId = track.source === "generated" ? track.assetId : undefined;
       if (this.desired.paused) {
         this.post({
           type: "pause",
@@ -139,7 +168,7 @@ export class WebviewAudioPlayer implements vscode.Disposable {
     const typed = message as { type: string; action?: string; value?: number; message?: string };
     if (typed.type === "ready") {
       this.ready = true;
-      this.sendDesiredPlayback();
+      void this.sendDesiredPlayback();
       return;
     }
     if (typed.type === "diagnostic" && typeof typed.message === "string") {
@@ -147,11 +176,33 @@ export class WebviewAudioPlayer implements vscode.Disposable {
       return;
     }
     if (typed.type !== "control") return;
-    if (typed.action === "pause" || typed.action === "resume" || typed.action === "stop") {
+    if (typed.action === "pause" || typed.action === "resume" || typed.action === "stop" || typed.action === "generate") {
       this.onControl(typed.action);
     } else if (typed.action === "setVolume" && typeof typed.value === "number") {
       this.onControl("setVolume", typed.value);
     }
+  }
+
+  private async playerTrack(track: Track, includeAudio: boolean): Promise<object> {
+    if (track.source === "procedural") return track;
+    const { audioFilePath, ...safeTrack } = track;
+    if (!includeAudio) return safeTrack;
+    return { ...safeTrack, audioBase64: await this.readAudioBase64(track.assetId, audioFilePath) };
+  }
+
+  private readAudioBase64(assetId: string, filePath: string): Promise<string> {
+    if (this.audioPayload?.assetId === assetId && this.audioPayload.filePath === filePath) {
+      return this.audioPayload.base64;
+    }
+    const base64 = this.loadAudioBase64(filePath);
+    this.audioPayload = { assetId, filePath, base64 };
+    return base64;
+  }
+
+  private async loadAudioBase64(filePath: string): Promise<string> {
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
+    if (bytes.byteLength === 0) throw new Error("The cached audio file is empty.");
+    return Buffer.from(bytes).toString("base64");
   }
 
   private getHtml(webview: vscode.Webview): string {
@@ -161,6 +212,7 @@ export class WebviewAudioPlayer implements vscode.Disposable {
       "default-src 'none'",
       `style-src ${webview.cspSource}`,
       `script-src ${webview.cspSource}`,
+      "media-src blob:",
     ].join("; ");
     const bars = Array.from({ length: 12 }, (_, index) => `<span style="--i:${index % 7}"></span>`).join("");
 
@@ -177,13 +229,14 @@ export class WebviewAudioPlayer implements vscode.Disposable {
   <main>
     <p class="eyebrow">Adaptive Coding Soundtrack</p>
     <h1 id="title">Waiting for coding activity</h1>
-    <p id="artist">Original audio generated locally with Web Audio</p>
+    <p id="artist">Local procedural audio is synthesized offline with Web Audio</p>
     <div class="visualizer" aria-hidden="true">${bars}</div>
     <div class="controls">
       <button id="toggle" type="button">Pause</button>
       <button id="stop" type="button">Stop Session</button>
       <label>Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="0.45"></label>
     </div>
+    <button id="generate" type="button">Generate and Cache This Style</button>
     <button id="audioGate" type="button">Enable Audio</button>
     <p id="status" aria-live="polite">The soundtrack will begin when activity is detected.</p>
   </main>
@@ -191,4 +244,8 @@ export class WebviewAudioPlayer implements vscode.Disposable {
 </body>
 </html>`;
   }
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown file error";
 }

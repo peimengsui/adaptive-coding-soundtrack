@@ -19,6 +19,14 @@ suite("Adaptive Coding Soundtrack Extension Host", () => {
       "adaptiveMusic.showPlayer",
       "adaptiveMusic.calibrateSensitivity",
       "adaptiveMusic.showDiagnostics",
+      "adaptiveMusic.chooseMusicSource",
+      "adaptiveMusic.configureProvider",
+      "adaptiveMusic.testProviderConnection",
+      "adaptiveMusic.removeProviderCredentials",
+      "adaptiveMusic.generateCurrentStyle",
+      "adaptiveMusic.previewGenerationPrompt",
+      "adaptiveMusic.showGeneratedCache",
+      "adaptiveMusic.clearGeneratedCache",
     ]) {
       assert.ok(commands.includes(command), `${command} is registered`);
     }
@@ -33,6 +41,11 @@ suite("Adaptive Coding Soundtrack Extension Host", () => {
     assert.equal(configuration.get("terminalMinimumDurationSeconds"), 5);
     assert.equal(configuration.get("completionCueCooldownSeconds"), 20);
     assert.equal(configuration.get("eventCueVolume"), 0.18);
+    assert.equal(configuration.get("musicSource"), "local");
+    assert.equal(configuration.get("generatedTrackDurationSeconds"), 30);
+    assert.equal(configuration.get("generatedCacheSizeMb"), 250);
+    assert.equal(configuration.get("remoteDailyGenerationLimit"), 1);
+    assert.equal(configuration.get("customPromptSuffix"), "");
   });
 
   test("starts the Webview player and stops a session", async () => {

@@ -17,7 +17,8 @@ const STYLE_PROFILES: Record<MusicStyle, StyleProfile> = {
 const DISPLAY_STYLE: Record<MusicStyle, string> = { ambient: "Ambient", jazz: "Jazz", lofi: "Lo-fi" };
 
 export class LocalProceduralMusicProvider implements MusicProvider {
-  public async getTrack(request: MusicRequest): Promise<Track> {
+  public async getTrack(request: MusicRequest, signal?: AbortSignal): Promise<Track> {
+    signal?.throwIfAborted();
     const profile = STYLE_PROFILES[request.style];
     const band = request.energy < 0.4 ? "low" : request.energy < 0.7 ? "mid" : "high";
     const intentTitle = request.intent.charAt(0).toUpperCase() + request.intent.slice(1);

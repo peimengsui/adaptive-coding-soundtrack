@@ -48,4 +48,6 @@ label { display: flex; flex: 1; min-width: 180px; gap: 10px; align-items: center
 input { flex: 1; accent-color: var(--vscode-textLink-foreground); }
 #audioGate { display: none; width: 100%; margin-top: 18px; }
 #audioGate.visible { display: block; }
+#generate { display: none; width: 100%; margin-top: 18px; }
+#generate.visible { display: block; }
 #status { min-height: 1.4em; margin-top: 18px; color: var(--vscode-descriptionForeground); }

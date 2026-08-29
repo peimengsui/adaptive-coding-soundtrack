@@ -6,6 +6,7 @@
   const artist = document.getElementById("artist");
   const toggle = document.getElementById("toggle");
   const stopButton = document.getElementById("stop");
+  const generateButton = document.getElementById("generate");
   const volumeInput = document.getElementById("volume");
   const audioGate = document.getElementById("audioGate");
   const status = document.getElementById("status");
@@ -28,12 +29,15 @@
 
   function reflectAudioState() {
     const running = Boolean(audioContext && audioContext.state === "running");
-    audioGate.classList.toggle("visible", !running);
-    document.body.classList.toggle("playing", running && Boolean(currentTrack) && !paused);
-    if (!running) status.textContent = "Playback is blocked. Click Enable Audio once to continue.";
+    const mediaBlocked = Boolean(currentScene?.kind === "generated" && currentScene.audio.paused && !paused);
+    audioGate.classList.toggle("visible", !running || mediaBlocked);
+    document.body.classList.toggle("playing", running && Boolean(currentTrack) && !paused && !mediaBlocked);
+    if (!running || mediaBlocked) status.textContent = "Playback is blocked. Click Enable Audio once to continue.";
     else if (paused && pauseReason === "idle") status.textContent = "Auto-paused after inactivity. Resume to keep playing.";
     else if (paused) status.textContent = "Soundtrack paused.";
-    else if (currentTrack) status.textContent = "Audio is playing locally.";
+    else if (currentTrack?.source === "generated") status.textContent = `Generated audio is playing from the local cache${currentTrack.cacheHit ? "" : " and was just saved"}.`;
+    else if (currentTrack?.remoteFallback) status.textContent = currentTrack.remoteFallback.message;
+    else if (currentTrack) status.textContent = "Local procedural audio is synthesized offline; no API is being used.";
     else status.textContent = "Waiting for a soundtrack.";
     diagnostic(`AudioContext ${audioContext?.state ?? "not-created"}`);
   }
@@ -147,7 +151,7 @@
     source.stop(at + 0.1);
   }
 
-  function createScene(track, fadeMs, startAt) {
+  function createProceduralScene(track, fadeMs, startAt) {
     const context = ensureAudio();
     const synth = track.synthesis;
     const input = context.createGain();
@@ -167,6 +171,7 @@
 
     const beat = 60 / synth.tempoBpm;
     const scene = {
+      kind: "procedural",
       track,
       synth,
       input,
@@ -215,6 +220,60 @@
     return scene;
   }
 
+  function createGeneratedScene(track, fadeMs, startAt) {
+    const context = ensureAudio();
+    if (typeof track.audioBase64 !== "string" || track.audioBase64.length === 0) {
+      throw new Error("Generated audio payload is missing.");
+    }
+    const binary = atob(track.audioBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    const objectUrl = URL.createObjectURL(new Blob([bytes], { type: track.mimeType ?? "audio/mpeg" }));
+    const audio = new Audio(objectUrl);
+    audio.loop = true;
+    audio.preload = "auto";
+    const source = context.createMediaElementSource(audio);
+    const filter = context.createBiquadFilter();
+    const sceneGain = context.createGain();
+    filter.type = "lowpass";
+    filter.frequency.value = 1_400 + track.adaptation.brightness * 7_000;
+    filter.Q.value = 0.35;
+    source.connect(filter).connect(sceneGain).connect(masterInput);
+    const fadeSeconds = Math.max(0.02, fadeMs / 1_000);
+    sceneGain.gain.setValueAtTime(0.0001, startAt);
+    sceneGain.gain.exponentialRampToValueAtTime(0.78 + track.adaptation.energy * 0.12, startAt + fadeSeconds);
+    const beat = 60 / track.adaptation.tempoBpm;
+    const scene = {
+      kind: "generated",
+      track,
+      audio,
+      objectUrl,
+      source,
+      filter,
+      gain: sceneGain,
+      stopped: false,
+      startedAt: startAt,
+      beat,
+      barDuration: beat * 4,
+    };
+    audio.addEventListener("playing", reflectAudioState);
+    audio.addEventListener("pause", reflectAudioState);
+    audio.addEventListener("error", () => {
+      diagnostic(`Generated audio failed to load (${audio.error?.code ?? "unknown"})`);
+      reflectAudioState();
+    });
+    audio.load();
+    const delay = Math.max(0, (startAt - context.currentTime) * 1_000);
+    setTimeout(() => {
+      if (scene.stopped) return;
+      void audio.play().then(reflectAudioState).catch((error) => {
+        diagnostic(`Generated audio start was blocked: ${String(error)}`);
+        reflectAudioState();
+      });
+    }, delay);
+    return scene;
+  }
+
   function morphScene(scene, track, fadeMs, at) {
     const generation = ++scene.morphGeneration;
     const delay = Math.max(0, (at - audioContext.currentTime) * 1_000);
@@ -238,6 +297,21 @@
     }, delay);
   }
 
+  function morphGeneratedScene(scene, track, fadeMs) {
+    scene.track = track;
+    scene.beat = 60 / track.adaptation.tempoBpm;
+    scene.barDuration = scene.beat * 4;
+    const now = audioContext.currentTime;
+    const seconds = Math.max(0.02, fadeMs / 1_000);
+    scene.filter.frequency.cancelScheduledValues(now);
+    scene.filter.frequency.setValueAtTime(scene.filter.frequency.value, now);
+    scene.filter.frequency.linearRampToValueAtTime(1_400 + track.adaptation.brightness * 7_000, now + seconds);
+    scene.gain.gain.cancelScheduledValues(now);
+    scene.gain.gain.setValueAtTime(Math.max(scene.gain.gain.value, 0.0001), now);
+    scene.gain.gain.exponentialRampToValueAtTime(0.78 + track.adaptation.energy * 0.12, now + seconds);
+    diagnostic(`Adapted ${track.id} without restarting cached audio`);
+  }
+
   function transitionBoundary(scene) {
     if (!scene || !audioContext || audioContext.state !== "running") return audioContext?.currentTime ?? 0;
     const now = audioContext.currentTime;
@@ -249,14 +323,23 @@
   function stopScene(scene, fadeMs, at = audioContext?.currentTime ?? 0) {
     if (!scene || scene.stopped) return;
     scene.stopped = true;
-    if (scene.timer) clearInterval(scene.timer);
+    if (scene.kind === "procedural" && scene.timer) clearInterval(scene.timer);
     const fadeSeconds = Math.max(0.02, fadeMs / 1_000);
     scene.gain.gain.cancelScheduledValues(at);
     scene.gain.gain.setValueAtTime(Math.max(scene.gain.gain.value, 0.0001), at);
     scene.gain.gain.exponentialRampToValueAtTime(0.0001, at + fadeSeconds);
     const delay = Math.max(0, (at - audioContext.currentTime) * 1_000) + fadeMs + 150;
     setTimeout(() => {
-      for (const node of [scene.input, scene.dry, scene.wet, scene.convolver, scene.gain]) {
+      if (scene.kind === "generated") {
+        scene.audio.pause();
+        scene.audio.removeAttribute("src");
+        scene.audio.load();
+        URL.revokeObjectURL(scene.objectUrl);
+      }
+      const nodes = scene.kind === "generated"
+        ? [scene.source, scene.filter, scene.gain]
+        : [scene.input, scene.dry, scene.wet, scene.convolver, scene.gain];
+      for (const node of nodes) {
         try { node.disconnect(); } catch { /* already disconnected */ }
       }
     }, delay);
@@ -267,12 +350,18 @@
     const previous = currentScene;
     const startAt = transitionBoundary(previous);
     currentTrack = track;
-    const canMorph = previous && previous.track.style === track.style;
-    if (canMorph) {
+    const canAdaptGenerated = previous?.kind === "generated" && track.source === "generated" && previous.track.assetId === track.assetId;
+    const canMorphProcedural = previous?.kind === "procedural" && track.source === "procedural" && previous.track.style === track.style;
+    if (canAdaptGenerated) {
+      currentScene = previous;
+      morphGeneratedScene(previous, track, fadeMs);
+    } else if (canMorphProcedural) {
       currentScene = previous;
       morphScene(previous, track, fadeMs, startAt);
     } else {
-      currentScene = createScene(track, fadeMs, startAt);
+      currentScene = track.source === "generated"
+        ? createGeneratedScene(track, fadeMs, startAt)
+        : createProceduralScene(track, fadeMs, startAt);
       if (previous) stopScene(previous, fadeMs, startAt);
     }
     const now = audioContext.currentTime;
@@ -282,10 +371,15 @@
     paused = false;
     pauseReason = undefined;
     title.textContent = track.title;
-    artist.textContent = `${track.artist} · generated locally`;
+    artist.textContent = track.source === "generated"
+      ? `${track.artist} · ${track.cacheHit ? "loaded from local cache" : "generated remotely, cached locally"}`
+      : track.remoteFallback
+        ? `${track.remoteFallback.providerLabel} selected · playing local procedural fallback`
+        : `${track.artist} · synthesized offline`;
+    generateButton.classList.toggle("visible", Boolean(track.source === "procedural" && track.remoteFallback));
     toggle.textContent = "Pause";
     vscode.setState({ volume: targetVolume, lastTrackId: track.id });
-    diagnostic(`${canMorph ? "Morphing" : "Queued"} ${track.id} at audio time ${startAt.toFixed(2)}`);
+    diagnostic(`${canAdaptGenerated ? "Adapting" : canMorphProcedural ? "Morphing" : "Queued"} ${track.id} at audio time ${startAt.toFixed(2)}`);
     reflectAudioState();
   }
 
@@ -307,7 +401,7 @@
   function playCue(cue, volume) {
     if (!currentTrack || paused) return;
     ensureAudio();
-    const root = currentTrack.synthesis.rootMidi;
+    const root = currentTrack.source === "generated" ? currentTrack.adaptation.rootMidi : currentTrack.synthesis.rootMidi;
     const level = Math.max(0, Math.min(1, volume));
     if (level === 0) return;
     const notes = cue === "failure" ? [root + 12, root + 8, root + 5] : [root + 12, root + 16, root + 19];
@@ -349,6 +443,8 @@
       toggle.textContent = "Pause";
       document.body.classList.remove("playing");
       title.textContent = "Session stopped";
+      artist.textContent = "Local procedural audio is synthesized offline with Web Audio";
+      generateButton.classList.remove("visible");
       status.textContent = "Start another session from the Command Palette.";
     }
     if (message.type === "volume") {
@@ -362,9 +458,13 @@
   window.addEventListener("error", (event) => diagnostic(`Player error: ${event.message}`));
   toggle.addEventListener("click", () => vscode.postMessage({ type: "control", action: paused ? "resume" : "pause" }));
   stopButton.addEventListener("click", () => vscode.postMessage({ type: "control", action: "stop" }));
+  generateButton.addEventListener("click", () => vscode.postMessage({ type: "control", action: "generate" }));
   volumeInput.addEventListener("input", () => vscode.postMessage({ type: "control", action: "setVolume", value: Number(volumeInput.value) }));
   audioGate.addEventListener("click", () => {
     ensureAudio();
+    if (currentScene?.kind === "generated" && currentScene.audio.paused) {
+      void currentScene.audio.play().then(reflectAudioState).catch((error) => diagnostic(`Generated audio resume failed: ${String(error)}`));
+    }
     if (currentTrack && paused) vscode.postMessage({ type: "control", action: "resume" });
   });
   vscode.postMessage({ type: "ready" });

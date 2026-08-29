@@ -1,31 +1,33 @@
-# Adaptive Coding Soundtrack 0.2.1 Release Plan
+# Adaptive Coding Soundtrack 0.3.0 Release Plan
 
 ## Objective
 
-Ship a focused continuity patch so ordinary terminal use does not restart the soundtrack, while preserving useful Waiting feedback for long-running work.
+Ship optional bring-your-own-key AI music generation without weakening the extension's local-first privacy, continuous playback, or cost controls.
 
-## Completed scope
+## Implemented scope
 
-- **Terminal policy:** configurable `off`, `longRunningOnly`, and `all` modes; five-second long-command default; terminal completion never enters the global Completed state.
-- **Continuous music:** same-style context changes morph the live procedural scene at a beat boundary without resetting its sequence; style changes retain crossfades.
-- **Event cues:** eligible terminal success and failure events use quiet one-shot cues with configurable volume, deduplication, and a 20-second cooldown.
-- **Privacy:** shell integration records lifecycle timing and outcome only, never command text or terminal output.
-- **Verification:** strict compilation, player syntax checking, 20 deterministic unit tests, Extension Host coverage, dependency audit, and validated VSIX packaging.
+- **Three providers:** ElevenLabs Music v2, Google Lyria 3 Pro Preview, and Stability AI Stable Audio 3 behind one mockable client contract.
+- **Secure opt-in:** local remains the default; keys live in VS Code Secret Storage; connection tests do not generate paid audio.
+- **Content-free requests:** providers receive only duration, derived musical controls, and an optional previewable user-authored suffix—never automatically collected editor, terminal, diagnostic, workspace, or chat content.
+- **Continuity and cost:** every paid request requires modal confirmation; one cached asset per provider/model/style/duration handles every context intent; local event cues, a one-attempt default daily ceiling, cancellation, and timeout bound cost.
+- **Resilience:** cache misses are clearly labeled and play procedural audio without a network request; legacy assets remain reusable; invalid audio, missing access, exhausted budget, timeout, or provider errors are actionable.
+- **Playback:** cached MP3 loops crossfade with procedural scenes and adapt energy/brightness locally without restarting the same asset.
+- **Visibility:** prompt preview, truthful now-playing provenance, cache inventory, per-track deletion, and diagnostics explain every fallback without telemetry.
+- **Verification:** deterministic mocked API, explicit-generation, detailed prompt, cache migration/eviction, fallback, unit, Extension Host, syntax, and package checks.
 
-## Acceptance criteria
+## Manual acceptance
 
-- A short terminal command neither enters Completed nor requests a cue.
-- A long command can enter Waiting and produces at most one eligible completion or failure cue.
-- Repeated eligible completions inside the cooldown do not produce repeated cues.
-- Context changes inside Ambient, Jazz, or Lo-fi preserve the running musical sequence.
-- Changing styles still produces a beat-aligned crossfade.
-- The extension passes unit and Extension Host tests on VS Code 1.95.3 and current stable.
-- The packaged extension remains content-free, local-first, and below 2 MB.
+- Verify local mode without an account or network.
+- With one provider account, save a key, test access, preview a prompt, explicitly generate one track, and confirm all context intents remain cache hits.
+- Confirm an uncached style makes no network request, explains the fallback, and exposes the explicit Generate action.
+- Confirm typing and short terminal commands do not restart the generated asset.
+- Confirm pause/resume, Idle override, completion/failure cues, source changes, provider failure fallback, key removal, and cache clearing.
+- Repeat provider-specific live generation for any additional provider whose account is available.
 
-## Deferred to 0.3.x
+## Future roadmap
 
-- Opt-in bring-your-own-token AI music providers
-- Provider credentials in VS Code SecretStorage
-- Content-free provider request schema, caching, budgets, provenance, and offline fallback
-- Cursor-specific context until a supported API exists
-- Small user pilot and opt-in feedback design
+- Suno official API evaluation after its detailed docs, pricing, licensing, retention, and availability stabilize.
+- Provider-specific cost estimates and richer user-facing failure remediation.
+- Longer-form or streaming music where continuity and spending remain bounded.
+- Cursor-specific context only through a supported public API.
+- Small opt-in user pilot and feedback design.

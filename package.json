@@ -1,8 +1,8 @@
 {
   "name": "adaptive-coding-soundtrack",
   "displayName": "Adaptive Coding Soundtrack",
-  "description": "Local-first music that adapts to your coding flow.",
-  "version": "0.2.1",
+  "description": "Local-first adaptive coding music with optional bring-your-own-key AI generation.",
+  "version": "0.3.0",
   "publisher": "adaptive-soundtrack",
   "repository": {
     "type": "git",
@@ -36,7 +36,8 @@
     "music",
     "focus",
     "productivity",
-    "cursor"
+    "cursor",
+    "ai music"
   ],
   "activationEvents": [
     "onCommand:adaptiveMusic.start",
@@ -47,7 +48,15 @@
     "onCommand:adaptiveMusic.showCurrentState",
     "onCommand:adaptiveMusic.showPlayer",
     "onCommand:adaptiveMusic.calibrateSensitivity",
-    "onCommand:adaptiveMusic.showDiagnostics"
+    "onCommand:adaptiveMusic.showDiagnostics",
+    "onCommand:adaptiveMusic.chooseMusicSource",
+    "onCommand:adaptiveMusic.configureProvider",
+    "onCommand:adaptiveMusic.testProviderConnection",
+    "onCommand:adaptiveMusic.removeProviderCredentials",
+    "onCommand:adaptiveMusic.generateCurrentStyle",
+    "onCommand:adaptiveMusic.previewGenerationPrompt",
+    "onCommand:adaptiveMusic.showGeneratedCache",
+    "onCommand:adaptiveMusic.clearGeneratedCache"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -96,6 +105,46 @@
         "command": "adaptiveMusic.showDiagnostics",
         "title": "Show Diagnostics",
         "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.chooseMusicSource",
+        "title": "Choose Music Source",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.configureProvider",
+        "title": "Configure AI Provider",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.testProviderConnection",
+        "title": "Test Provider Connection",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.removeProviderCredentials",
+        "title": "Remove Provider API Key",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.generateCurrentStyle",
+        "title": "Generate and Cache Current Style",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.previewGenerationPrompt",
+        "title": "Preview Generation Prompt",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.showGeneratedCache",
+        "title": "Show Generated Music Cache",
+        "category": "Adaptive Music"
+      },
+      {
+        "command": "adaptiveMusic.clearGeneratedCache",
+        "title": "Clear Generated Music Cache",
+        "category": "Adaptive Music"
       }
     ],
     "configuration": {
@@ -115,6 +164,57 @@
           ],
           "default": "ambient",
           "description": "Music style selected when a session starts."
+        },
+        "adaptiveMusic.musicSource": {
+          "type": "string",
+          "enum": [
+            "local",
+            "elevenlabs",
+            "google-lyria",
+            "stability"
+          ],
+          "enumDescriptions": [
+            "Free local procedural audio with no account or network access",
+            "ElevenLabs Music v2 using your own paid API access",
+            "Google Lyria 3 Pro Preview using your own paid-tier Gemini API key",
+            "Stability AI Stable Audio 3 using your own credits"
+          ],
+          "default": "local",
+          "description": "Preferred soundtrack source. Cached remote tracks play automatically; paid generation requires explicit confirmation and cache misses play local procedural audio."
+        },
+        "adaptiveMusic.generatedTrackDurationSeconds": {
+          "type": "number",
+          "minimum": 30,
+          "maximum": 360,
+          "default": 30,
+          "description": "Duration requested only after you explicitly confirm Generate and Cache Current Style."
+        },
+        "adaptiveMusic.generatedCacheSizeMb": {
+          "type": "number",
+          "minimum": 25,
+          "maximum": 2048,
+          "default": 250,
+          "description": "Maximum disk space for generated MP3 files. Least-recently-used tracks are removed first."
+        },
+        "adaptiveMusic.remoteRequestTimeoutSeconds": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 900,
+          "default": 300,
+          "description": "Maximum time to wait for an explicitly confirmed AI generation request."
+        },
+        "adaptiveMusic.remoteDailyGenerationLimit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 1,
+          "description": "Maximum explicit remote generation attempts per provider per UTC day. Failed attempts count; cached playback does not. Use 0 for unlimited."
+        },
+        "adaptiveMusic.customPromptSuffix": {
+          "type": "string",
+          "default": "",
+          "maxLength": 600,
+          "description": "Optional musical direction appended to paid generation prompts. Do not include source code, secrets, paths, or terminal content."
         },
         "adaptiveMusic.volume": {
           "type": "number",
