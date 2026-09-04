@@ -55,7 +55,7 @@ test("generated cache lists, removes, and evicts assets", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "adaptive-music-cache-"));
   try {
     const cache = new GeneratedMusicCache(directory, () => 90);
-    const bytes = Uint8Array.from({ length: 60 }, (_, index) => index);
+    const bytes = mp3Bytes(60);
     const first = await cache.put(descriptor, bytes);
     await new Promise((resolve) => setTimeout(resolve, 2));
     const secondDescriptor = { ...descriptor, style: "ambient" as const };
@@ -71,3 +71,49 @@ test("generated cache lists, removes, and evicts assets", async () => {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test("generated cache repairs invalid audio and interrupted temporary files while preserving orphans", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "adaptive-music-cache-"));
+  const cacheDirectory = path.join(directory, "generated-music-v1");
+  try {
+    const cache = new GeneratedMusicCache(directory, () => 1024 * 1024);
+    const entry = await cache.put(descriptor, mp3Bytes(64));
+    await fs.writeFile(entry.filePath, Uint8Array.from([1, 2, 3]));
+    await fs.writeFile(path.join(cacheDirectory, "interrupted.mp3.tmp"), mp3Bytes(40));
+    await fs.writeFile(path.join(cacheDirectory, "orphan.mp3"), mp3Bytes(40));
+
+    const result = await cache.repair();
+    assert.deepEqual(result, {
+      removedEntries: 1,
+      removedTemporaryFiles: 1,
+      orphanedAudioFiles: 1,
+      corruptIndexBackedUp: false,
+    });
+    assert.deepEqual(await cache.list(), []);
+    await fs.stat(path.join(cacheDirectory, "orphan.mp3"));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("generated cache backs up corrupt metadata without deleting paid orphaned audio", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "adaptive-music-cache-"));
+  const cacheDirectory = path.join(directory, "generated-music-v1");
+  try {
+    const cache = new GeneratedMusicCache(directory, () => 1024 * 1024);
+    const entry = await cache.put(descriptor, mp3Bytes(64));
+    await fs.writeFile(path.join(cacheDirectory, "index.json"), "{invalid", "utf8");
+
+    const result = await cache.repair();
+    assert.equal(result.corruptIndexBackedUp, true);
+    assert.equal(result.orphanedAudioFiles, 1);
+    await fs.stat(entry.filePath);
+    assert.ok((await fs.readdir(cacheDirectory)).some((file) => file.startsWith("index.corrupt-")));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+function mp3Bytes(length: number): Uint8Array {
+  return Uint8Array.from([0x49, 0x44, 0x33, ...Array.from({ length: Math.max(29, length - 3) }, () => 0)]);
+}

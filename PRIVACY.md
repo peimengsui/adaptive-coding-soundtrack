@@ -17,4 +17,4 @@ The automatically constructed portion of the prompt never contains source code, 
 
 Generated MP3 files and content-free metadata are stored in the extension's private global-storage directory. The cache stores provider, model, style, duration, timestamps, size, and a hashed asset key; it does not store prompts or credentials. The least-recently-used cache defaults to 250 MB. **Show Generated Music Cache** can inspect or delete one asset, **Clear Generated Music Cache** deletes all assets, and **Remove Provider API Key** deletes a saved key.
 
-The extension has no telemetry. Each remote provider independently controls its service-side logging, retention, training, licensing, billing, and deletion behavior under its own terms and privacy policy.
+The extension has no product telemetry. Each remote music provider independently controls its service-side logging, retention, training, licensing, billing, and deletion behavior under its own terms and privacy policy.

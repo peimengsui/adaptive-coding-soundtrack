@@ -1,10 +1,15 @@
-# Adaptive Coding Soundtrack 0.3.0 Release Plan
+# Adaptive Coding Soundtrack 0.3.1 Release Plan
 
 ## Objective
 
-Ship optional bring-your-own-key AI music generation without weakening the extension's local-first privacy, continuous playback, or cost controls.
+Harden the 0.3 provider release with safer cache handling and explicit interrupted-session recovery.
 
 ## Implemented scope
+
+- **Cache repair:** invalid/missing audio and temporary files are removed; corrupt metadata is backed up while orphaned paid MP3 files are preserved.
+- **Session recovery:** an interrupted active session can be explicitly resumed after editor reload or restart.
+
+The 0.3.0 provider scope remains unchanged:
 
 - **Three providers:** ElevenLabs Music v2, Google Lyria 3 Pro Preview, and Stability AI Stable Audio 3 behind one mockable client contract.
 - **Secure opt-in:** local remains the default; keys live in VS Code Secret Storage; connection tests do not generate paid audio.

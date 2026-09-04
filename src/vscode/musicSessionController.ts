@@ -13,6 +13,12 @@ export interface SessionSettings {
   eventCueVolume: number;
 }
 export type PlaybackState = "inactive" | "playing" | "user_paused" | "context_paused";
+export type SessionEndReason = "stopped" | "player_closed" | "extension_deactivated";
+export interface MusicSessionObserver {
+  sessionStarted(style: MusicStyle): void;
+  sessionEnded(reason: SessionEndReason): void;
+  styleSelected(style: MusicStyle): void;
+}
 const STYLE_LABELS: Record<MusicStyle, string> = { ambient: "Ambient", jazz: "Jazz", lofi: "Lo-fi" };
 const STATE_LABELS: Record<CodingContext["state"], string> = { idle: "Idle", active_coding: "Active Coding", deep_focus: "Deep Focus", waiting: "Waiting", reviewing: "Reviewing", completed: "Completed" };
 
@@ -39,6 +45,7 @@ export class MusicSessionController implements vscode.Disposable {
     private context: CodingContext,
     private settings: SessionSettings,
     private readonly output: vscode.OutputChannel,
+    private readonly observer?: MusicSessionObserver,
   ) {
     this.statusBar.command = "adaptiveMusic.togglePause";
     this.statusBar.hide();
@@ -60,11 +67,12 @@ export class MusicSessionController implements vscode.Disposable {
     this.generation += 1;
     this.player.reveal();
     this.output.appendLine(`[session] Started with ${STYLE_LABELS[style]}`);
+    this.observer?.sessionStarted(style);
     this.updateStatus();
     await this.adapt(true);
   }
 
-  public stop(): void {
+  public stop(reason: SessionEndReason = "stopped"): void {
     if (!this.active) return;
     this.active = false;
     this.generationAbort?.abort();
@@ -78,6 +86,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.idlePlaybackOverride = false;
     this.player.stop();
     this.output.appendLine("[session] Stopped");
+    this.observer?.sessionEnded(reason);
     this.player.dispose();
     this.statusBar.hide();
   }
@@ -113,6 +122,7 @@ export class MusicSessionController implements vscode.Disposable {
     this.generationAbort?.abort();
     this.explicitGenerationPending = false;
     this.style = style;
+    this.observer?.styleSelected(style);
     this.currentRequestSignature = undefined;
     this.updateStatus();
     if (this.active) await this.adapt(true);
@@ -207,6 +217,7 @@ export class MusicSessionController implements vscode.Disposable {
   }
 
   public dispose(): void {
+    if (this.active) this.observer?.sessionEnded("extension_deactivated");
     this.active = false;
     this.generationAbort?.abort();
     this.generationAbort = undefined;

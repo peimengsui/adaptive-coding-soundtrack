@@ -9,14 +9,17 @@ import { CacheEntry, GeneratedMusicCache } from "./providers/generatedMusicCache
 import { GoogleLyriaMusicClient } from "./providers/googleLyriaMusicClient";
 import { StabilityAudioClient } from "./providers/stabilityAudioClient";
 import { ActivityCollector } from "./vscode/activityCollector";
-import { MusicSessionController, SessionSettings, stateLabel, styleLabel } from "./vscode/musicSessionController";
+import { MusicSessionController, SessionEndReason, SessionSettings, stateLabel, styleLabel } from "./vscode/musicSessionController";
 import { ProviderCredentialStore } from "./vscode/providerCredentialStore";
 import { PlayerControl, WebviewAudioPlayer } from "./vscode/webviewAudioPlayer";
 
 const SECTION = "adaptiveMusic";
 type ContextSensitivity = "calm" | "balanced" | "responsive";
 
-export function activate(extensionContext: vscode.ExtensionContext): void {
+interface RestorableSession { active: boolean; style: MusicStyle; }
+const SESSION_RESTORE_KEY = "adaptiveMusic.session.restore.v1";
+
+export async function activate(extensionContext: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel("Adaptive Music", { log: true });
   output.appendLine("[extension] Adaptive Coding Soundtrack activated");
   const engine = new ContextEngine(readEngineConfig());
@@ -27,6 +30,17 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
     extensionContext.globalStorageUri.fsPath,
     () => vscode.workspace.getConfiguration(SECTION).get<number>("generatedCacheSizeMb", 250) * 1024 * 1024,
   );
+  try {
+    const repair = await cache.repair();
+    if (repair.removedEntries || repair.removedTemporaryFiles || repair.orphanedAudioFiles || repair.corruptIndexBackedUp) {
+      output.warn(
+        `[cache] Repair removed ${repair.removedEntries} invalid entries and ${repair.removedTemporaryFiles} temporary files; ` +
+        `${repair.orphanedAudioFiles} unindexed MP3 file(s) were preserved${repair.corruptIndexBackedUp ? "; corrupt metadata was backed up" : ""}`,
+      );
+    }
+  } catch (error) {
+    output.warn(`[cache] Startup repair failed: ${safeUiError(error)}`);
+  }
   const provider = new AdaptiveMusicProvider(
     new LocalProceduralMusicProvider(),
     [new ElevenLabsMusicClient(), new GoogleLyriaMusicClient(), new StabilityAudioClient()],
@@ -43,6 +57,7 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
       if (control === "pause") void controller.togglePause(true);
       else if (control === "resume") void controller.togglePause(false);
       else if (control === "stop") controller.stop();
+      else if (control === "panelClosed") controller.stop("player_closed");
       else if (control === "generate") void vscode.commands.executeCommand("adaptiveMusic.generateCurrentStyle");
       else if (control === "setVolume" && typeof value === "number") void setVolume(controller, value);
     },
@@ -51,6 +66,21 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
   controller = new MusicSessionController(
     new MusicDirector(), provider, player, statusBar,
     currentContext, readSessionSettings(), output,
+    {
+      sessionStarted: (style) => {
+        void extensionContext.globalState.update(SESSION_RESTORE_KEY, { active: true, style } satisfies RestorableSession);
+      },
+      sessionEnded: (reason: SessionEndReason) => {
+        if (reason !== "extension_deactivated") {
+          void extensionContext.globalState.update(SESSION_RESTORE_KEY, { active: false, style: controller.getStyle() } satisfies RestorableSession);
+        }
+      },
+      styleSelected: (style) => {
+        if (controller.isActive()) {
+          void extensionContext.globalState.update(SESSION_RESTORE_KEY, { active: true, style } satisfies RestorableSession);
+        }
+      },
+    },
   );
   if (extensionContext.extensionMode === vscode.ExtensionMode.Test) {
     extensionContext.subscriptions.push(
@@ -325,9 +355,29 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
       }
     }),
   );
+
+  void offerSessionRestore(extensionContext, controller);
 }
 
 export function deactivate(): void {}
+
+async function offerSessionRestore(
+  extensionContext: vscode.ExtensionContext,
+  controller: MusicSessionController,
+): Promise<void> {
+  if (extensionContext.extensionMode === vscode.ExtensionMode.Test) return;
+  const previous = extensionContext.globalState.get<RestorableSession>(SESSION_RESTORE_KEY);
+  if (!previous?.active || !MUSIC_STYLES.includes(previous.style)) return;
+  const action = await vscode.window.showInformationMessage(
+    `Resume the ${styleLabel(previous.style)} Adaptive Music session interrupted by the previous editor shutdown or reload?`,
+    "Resume Session",
+    "Dismiss",
+  );
+  if (action === "Resume Session") await controller.start(previous.style);
+  else if (action === "Dismiss") {
+    await extensionContext.globalState.update(SESSION_RESTORE_KEY, { active: false, style: previous.style } satisfies RestorableSession);
+  }
+}
 
 async function chooseStyle(current: MusicStyle, placeHolder: string): Promise<MusicStyle | undefined> {
   const selected = await vscode.window.showQuickPick(MUSIC_STYLES.map((style) => ({

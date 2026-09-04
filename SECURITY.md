@@ -8,7 +8,7 @@ Security fixes are provided for the latest released version.
 
 Do not open a public issue containing credentials, source code, or private workspace data. Use GitHub's private vulnerability reporting when it is available for this repository. Otherwise, open only a minimal public issue using synthetic files and ask the maintainer for a private reporting channel.
 
-The extension has no runtime npm dependencies and does not execute workspace commands. Local mode is offline. Opt-in remote mode connects only to the selected provider's official HTTPS API.
+The extension has no runtime npm dependencies and does not execute workspace commands. Local music mode is offline. Opt-in remote music mode connects only to the selected provider's official HTTPS API. The extension has no product telemetry.
 
 Provider keys are accepted in a password-masked input, stored through VS Code Secret Storage, excluded from settings and diagnostic output, and removed through **Adaptive Music: Remove Provider API Key**. Provider failures are reduced to status-only messages so response bodies cannot echo credentials. Never include an API key in a bug report.
 

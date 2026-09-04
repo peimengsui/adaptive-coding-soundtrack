@@ -1,6 +1,6 @@
 # Adaptive Coding Soundtrack
 
-Adaptive Coding Soundtrack is a local-first VS Code and Cursor extension that changes music as your coding flow changes. Version 0.3.0 adds optional, explicitly confirmed bring-your-own-key generation through ElevenLabs Music, Google Lyria, and Stability AI while keeping the free procedural engine as the default and automatic fallback.
+Adaptive Coding Soundtrack is a local-first VS Code and Cursor extension that changes music as your coding flow changes. Version 0.3.1 hardens the 0.3 provider release with cache repair and interrupted-session recovery while keeping the free procedural engine as the default and automatic fallback.
 
 Start a session, choose **Ambient**, **Jazz**, or **Lo-fi**, and code normally. The status bar reports the inferred state—for example, `♫ Jazz · Deep Focus`—while a small Webview synthesizes the soundtrack locally with Web Audio.
 
@@ -25,6 +25,8 @@ No account, API key, or network connection is required for the default local mod
 - Paid generation only after explicit confirmation; selecting a provider or encountering a cache miss never spends credits
 - One cached AI track per provider/model/style/duration, with local adaptation across ordinary context changes
 - A 250 MB least-recently-used MP3 cache with inspection and per-track deletion
+- Startup cache repair that removes invalid entries and interrupted writes while preserving orphaned paid MP3s
+- An explicit resume offer after a soundtrack session is interrupted by an editor reload or shutdown
 - No runtime npm dependencies or bundled recordings
 
 ## Architecture
@@ -111,12 +113,12 @@ npm ci
 npm run verify
 ```
 
-Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.3.0.vsix`.
+Then open the Extensions view, choose **… → Install from VSIX…**, and select `adaptive-coding-soundtrack-0.3.1.vsix`.
 
 VS Code CLI alternative:
 
 ```bash
-code --install-extension adaptive-coding-soundtrack-0.3.0.vsix
+code --install-extension adaptive-coding-soundtrack-0.3.1.vsix
 ```
 
 ## Run from source
@@ -247,10 +249,10 @@ Register it with `AdaptiveMusicProvider` and add the source to the manifest. The
 
 ## Privacy and security
 
-The extension records no source content. Selecting a remote provider makes no network request. Network access occurs only when the user explicitly tests a connection or confirms a paid generation. Detailed policies ship as `PRIVACY.md` and `SECURITY.md`.
+The extension records no source content and has no product telemetry. Selecting a remote provider makes no network request. Network access occurs only when the user explicitly tests a provider connection or confirms a paid generation, as described in `PRIVACY.md`.
 
 - No source text, filenames, prompts, diagnostic messages, terminal commands, or terminal output
-- No telemetry
+- No product telemetry
 - Remote keys live in VS Code Secret Storage and are sent only to the selected provider
 - Automatically constructed remote prompts contain musical controls only. An optional custom suffix is sent verbatim after a previewable privacy warning.
 - No runtime npm dependencies
@@ -264,7 +266,7 @@ The extension records no source content. Selecting a remote provider makes no ne
 - Debug termination does not expose success/failure and is treated as a neutral successful Completed state.
 - Chromium may require one **Enable Audio** click per new player Webview.
 - Each provider/model/style/duration has one cached AI asset; an uncached style plays clearly labeled procedural audio until the user explicitly generates it.
-- A session is not automatically restarted after an editor reload.
+- An interrupted session is never silently restarted; the extension offers an explicit Resume Session action after reload or restart.
 - Cursor Agent internal state is unavailable through standard APIs.
 - Remote APIs can change, incur provider charges, enforce regional/model access, or reject a key. Local fallback remains available.
 - Google Lyria 3 Pro is a preview API and may change before general availability.
@@ -272,7 +274,7 @@ The extension records no source content. Selecting a remote provider makes no ne
 ## Future roadmap
 
 - Evaluate the official Suno API once its detailed documentation, pricing, licensing, and availability are mature enough for a stable adapter.
-- Add provider-specific cost estimates without sending telemetry.
+- Add provider-specific cost estimates without transmitting prompts, credentials, or workspace content.
 - Explore longer-lived or streaming generation only where it can preserve musical continuity and bounded cost.
 - Add Cursor-specific context only when a supported public API exists.
 

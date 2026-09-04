@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { PlaybackCue, Track } from "../core/types";
 
-export type PlayerControl = "pause" | "resume" | "stop" | "generate" | "setVolume";
+export type PlayerControl = "pause" | "resume" | "stop" | "panelClosed" | "generate" | "setVolume";
 export type PlayerControlHandler = (control: PlayerControl, value?: number) => void;
 export type PlayerPauseReason = "user" | "idle";
 
@@ -60,7 +60,7 @@ export class WebviewAudioPlayer implements vscode.Disposable {
       this.ready = false;
       this.sendGeneration += 1;
       this.lastSentGeneratedAssetId = undefined;
-      if (!this.disposing) this.onControl("stop");
+      if (!this.disposing) this.onControl("panelClosed");
     });
   }
 

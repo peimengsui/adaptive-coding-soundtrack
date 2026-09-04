@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Added startup cache repair for missing or invalid audio, interrupted temporary files, and corrupt metadata. Corrupt indexes are backed up and unindexed paid MP3 files are preserved.
+- Added an explicit resume offer after an active session is interrupted by an editor reload or shutdown.
+
 ## 0.3.0
 
 - Added opt-in bring-your-own-key adapters for ElevenLabs Music v2, Google Lyria 3 Pro Preview, and Stability AI Stable Audio 3.

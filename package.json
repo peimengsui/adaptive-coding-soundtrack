@@ -2,7 +2,7 @@
   "name": "adaptive-coding-soundtrack",
   "displayName": "Adaptive Coding Soundtrack",
   "description": "Local-first adaptive coding music with optional bring-your-own-key AI generation.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "adaptive-soundtrack",
   "repository": {
     "type": "git",
@@ -40,6 +40,7 @@
     "ai music"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:adaptiveMusic.start",
     "onCommand:adaptiveMusic.stop",
     "onCommand:adaptiveMusic.togglePause",
